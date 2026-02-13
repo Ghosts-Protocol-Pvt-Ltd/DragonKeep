@@ -2,6 +2,7 @@ mod cli;
 mod engine;
 mod config;
 mod report;
+mod community;
 
 use clap::Parser;
 use cli::Cli;

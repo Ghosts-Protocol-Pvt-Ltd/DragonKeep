@@ -1,16 +1,16 @@
-# 🏰 DragonKeep
+# 🏰 DragonKeep — Community Edition
 
-**Next-gen system security, performance & stability platform.**
+**Next-gen system security, threat defense & performance platform.**
 
-A command-line tool built in Rust that scans, hardens, tunes, and monitors your system — from gaming rigs to AI workstations to production servers. 8 specialized engines cover security auditing, AI/ML threat detection, supply chain integrity, runtime anomaly detection, performance tuning, process monitoring, and network hardening.
+A command-line tool built in Rust that scans, defends, hunts, hardens, tunes, and monitors your system — from gaming rigs to AI workstations to production servers. 11 specialized engines cover malware defense, ransomware protection, threat hunting, security auditing, AI/ML threat detection, supply chain integrity, runtime anomaly detection, performance tuning, process monitoring, and network hardening.
 
 ## Why DragonKeep?
 
-Most security tools do one thing. DragonKeep runs 8 engines in a single binary with zero runtime dependencies, producing findings mapped to 6 industry frameworks:
+Most security tools do one thing. DragonKeep runs 11 engines in a single binary with zero runtime dependencies, producing findings mapped to 6 industry frameworks:
 
-- **MITRE ATT&CK** — Technique IDs from [attack.mitre.org](https://attack.mitre.org) (100+ technique mappings)
+- **MITRE ATT&CK** — Technique IDs from [attack.mitre.org](https://attack.mitre.org) (150+ technique mappings)
 - **Atomic Red Team** — Test procedures from [Red Canary](https://github.com/redcanaryco/atomic-red-team) (ATT&CK technique IDs double as test references)
-- **NIST SP 800-53 Rev 5** — Security controls (SI, AC, CM, SC, AU, IR, SA, IA families)
+- **NIST SP 800-53 Rev 5** — Security controls (SI, AC, CM, SC, AU, IR, CP, IA families)
 - **DISA STIG** — Defense Information Systems Agency STIGs (RHEL-08 V-230xxx series)
 - **CIS Benchmarks v8** — Center for Internet Security hardening benchmarks
 - **CVSS v3.1** — Common Vulnerability Scoring System base scores (0.0–10.0)
@@ -20,11 +20,19 @@ Output in SARIF v2.1.0 for GitHub Code Scanning, Azure DevOps, and CI/CD integra
 | Feature | DragonKeep | lynis | Wazuh | CrowdStrike |
 |---------|-----------|-------|-------|-------------|
 | Security scanning | ✅ | ✅ | ✅ | ✅ |
+| Malware detection & defense | ✅ | ❌ | ✅ | ✅ |
+| Ransomware defense | ✅ | ❌ | Partial | ✅ |
+| Threat hunting | ✅ | ❌ | Partial | ✅ |
+| Automated remediation | ✅ | ❌ | ✅ | ✅ |
 | AI/ML threat surface | ✅ | ❌ | ❌ | Partial |
 | Supply chain audit | ✅ | ❌ | Partial | ✅ |
 | Runtime anomaly detection | ✅ | ❌ | ✅ | ✅ |
 | Performance tuning | ✅ | ❌ | ❌ | ❌ |
 | Live TUI monitor | ✅ | ❌ | ❌ | ❌ |
+| Security score & grading | ✅ | ❌ | ❌ | Partial |
+| Community threat feeds | ✅ | ❌ | ✅ | N/A |
+| Scan profiles | ✅ | ❌ | ❌ | ❌ |
+| Ransomware canary files | ✅ | ❌ | ❌ | ❌ |
 | SARIF output | ✅ | ❌ | ❌ | ❌ |
 | CVSS scoring | ✅ | ❌ | ✅ | ✅ |
 | MITRE ATT&CK mapping | ✅ | ❌ | ✅ | ✅ |
@@ -32,13 +40,12 @@ Output in SARIF v2.1.0 for GitHub Code Scanning, Azure DevOps, and CI/CD integra
 | DISA STIG mapping | ✅ | ❌ | Partial | ✅ |
 | NIST SP 800-53 mapping | ✅ | ❌ | ❌ | ❌ |
 | GPU awareness | ✅ | ❌ | ❌ | ❌ |
-| Workload profiles | ✅ | ❌ | ❌ | ❌ |
 | Single binary | ✅ | ❌ | ❌ | ❌ |
 | Zero agent overhead | ✅ | ✅ | ❌ | ❌ |
 
 ## Engines
 
-DragonKeep runs 8 specialized engines:
+DragonKeep runs 11 specialized engines:
 
 ### 🛡️ Sentinel — Security Scanner
 - Kernel security (ASLR, kptr_restrict, dmesg_restrict, core dumps, SYN cookies, NX bit, kernel lockdown)
@@ -113,6 +120,45 @@ DragonKeep runs 8 specialized engines:
 - Hidden file detection in world-writable directories (/tmp, /dev/shm)
 - Namespace manipulation analysis (user namespace escape vectors)
 
+### 🐉 Hydra — Malware Detection & Defense
+- Known malware process detection (16 C2/implant signatures: Cobalt Strike, Meterpreter, Sliver, Havoc, etc.)
+- LOLBins abuse detection (curl|wget piping to shell, base64 obfuscation, openssl reverse shells)
+- Deep rootkit detection (hidden processes, kernel module rootkits: Diamorphine, Reptile, Suterusu, etc.)
+- LD_PRELOAD rootkit scanning
+- Persistence mechanism audit (systemd, cron, SSH keys, init scripts, shell profiles)
+- Webshell detection (PHP/JSP/ASP backdoors with 17 pattern signatures)
+- C2 beaconing pattern analysis (suspicious port connections, DNS tunneling)
+- Fileless malware detection (memfd_create, /dev/shm execution)
+- Dropper artifact scanning in staging directories
+- System binary integrity verification (rpm -Va / dpkg --verify)
+- **Automated remediation:** Kill processes, quarantine files, disable services
+
+### 🔥 Drake — Ransomware Defense & Recovery
+- Known ransomware process detection (20 families: LockBit, BlackCat, Conti, REvil, Ryuk, Akira, etc.)
+- Mass encryption activity detection (file operation monitoring)
+- Ransomware file extension monitoring (30+ known extensions)
+- Ransom note detection (30+ filename patterns with content validation)
+- Backup integrity verification (restic, borg, duplicity, timeshift, BTRFS/ZFS snapshots)
+- Backup destruction detection (vssadmin, wbadmin, zfs destroy, lvremove)
+- Shannon entropy analysis for mass encryption detection
+- Ransomware canary file deployment & monitoring
+- Anti-recovery technique detection (shred, wipe, secure deletion)
+- Recovery tool availability check (testdisk, photorec, foremost)
+- **Automated remediation:** Kill ransomware, network isolation, evidence preservation, recovery guidance
+
+### 🦅 Talon — Threat Hunting & Advanced Threat Protection
+- Lateral movement detection (SSH brute force, PsExec, WMI, RDP, tunneling tools)
+- Privilege escalation hunting (SUID abuse, LinPEAS, kernel exploits: DirtyPipe, PwnKit, Looney Tunables)
+- Data exfiltration indicator detection (cloud uploads, archive creation, large transfers)
+- Internal reconnaissance detection (nmap, masscan, bloodhound, enum4linux)
+- Credential access tool detection (mimikatz, hashcat, john, responder, lazagne)
+- System log analysis (auth failures, segfaults, OOM kills, audit log tampering)
+- Suspicious user session detection (root login, UID 0 backdoor accounts)
+- Process tree anomaly detection (web server → shell, database → shell)
+- IOC artifact scanning (payloads, exploits, implants in temp directories)
+- Suspicious connection monitoring (malicious port patterns)
+- **Interactive threat hunting mode** with hypothesis-driven approach
+
 ## Installation
 
 ### From source
@@ -130,56 +176,74 @@ sudo cp target/release/dragonkeep /usr/local/bin/
 ## Usage
 
 ```bash
-# Full system audit (all 8 engines)
+# Full system audit (all 11 engines)
 dragonkeep scan
+
+# Use community scan profiles
+dragonkeep scan --profile quick         # Fast essential check (~30s)
+dragonkeep scan --profile standard       # Balanced audit (~2min)
+dragonkeep scan --profile deep           # All 11 engines (~5min)
+dragonkeep scan --profile malware        # Malware & ransomware focus
+dragonkeep scan --profile threat-hunt    # Active threat detection
+dragonkeep scan --profile compliance     # STIG/NIST/CIS compliance
+dragonkeep scan --profile server         # Production server check
+dragonkeep scan --profile workstation    # Desktop security check
 
 # Scan specific engines
 dragonkeep scan sentinel,forge
-dragonkeep scan spectre,aegis,phantom
+dragonkeep scan hydra,drake,talon
+
+# Malware & ransomware defense
+dragonkeep malware                       # Malware scan (Hydra engine)
+dragonkeep ransomware                    # Ransomware defense (Drake engine)
+dragonkeep hunt                          # Proactive threat hunting (Talon engine)
+
+# Threat remediation (safe mode by default)
+dragonkeep remediate                     # Remediate all threats
+dragonkeep remediate malware             # Remediate malware only
+dragonkeep remediate ransomware          # Ransomware incident response
+
+# Community features
+dragonkeep score                         # Security score & grade
+dragonkeep feeds                         # Community threat intel feeds
+dragonkeep canary                        # Deploy ransomware canary files
+dragonkeep profiles                      # Show scan profiles
+dragonkeep community                     # Community edition info
 
 # Individual engine commands
-dragonkeep ai          # AI/ML threat surface scan
-dragonkeep supply      # Supply chain integrity audit
-dragonkeep anomaly     # Runtime anomaly detection
-dragonkeep firewall    # Network security audit
-dragonkeep processes   # Process analysis
+dragonkeep ai                            # AI/ML threat surface scan
+dragonkeep supply                        # Supply chain integrity audit
+dragonkeep anomaly                       # Runtime anomaly detection
+dragonkeep firewall                      # Network security audit
+dragonkeep processes                     # Process analysis
 
 # Show system status
 dragonkeep status
 
-# Tune for gaming
+# Tune for gaming / AI / server
 dragonkeep tune gaming
-
-# Tune for AI/ML workloads
 dragonkeep tune ai
 
-# Apply security hardening (standard profile)
+# Apply security hardening
 dragonkeep harden
-
-# Paranoid hardening
 dragonkeep harden paranoid
 
 # Live system monitor (TUI)
 dragonkeep monitor
 
-# Generate full report (all 8 engines)
+# Generate full report (all 11 engines)
 dragonkeep report
-
-# Save report to file
 dragonkeep report --output report.json
-
-# Export as SARIF (GitHub Code Scanning / Azure DevOps compatible)
 dragonkeep report --output scan.sarif
 
-# SARIF to stdout
+# Output formats
 dragonkeep scan --format sarif
-
-# JSON output
 dragonkeep scan --format json
+dragonkeep scan --format minimal
 
 # Dry run — see what would change
 dragonkeep harden paranoid --dry-run
-dragonkeep tune gaming --dry-run
+dragonkeep remediate --dry-run
 
 # Initialize config
 dragonkeep init
@@ -289,6 +353,30 @@ deleted_exe_scan = true
 cron_audit = true
 connection_scan = true
 masquerade_detection = true
+
+[hydra]
+enabled = true
+rootkit_detection = true
+persistence_scan = true
+webshell_scan = true
+c2_detection = true
+fileless_detection = true
+
+[drake]
+enabled = true
+extension_monitor = true
+ransom_note_scan = true
+backup_protection = true
+entropy_analysis = true
+canary_monitoring = true
+
+[talon]
+enabled = true
+privesc_hunting = true
+exfil_detection = true
+credential_hunting = true
+log_analysis = true
+ioc_scan = true
 ```
 
 ## Safety
@@ -307,11 +395,12 @@ DragonKeep is designed to **never break your system**:
 dragonkeep
 ├── src/
 │   ├── main.rs          # Entry point, banner, tokio runtime
-│   ├── cli.rs           # clap CLI parser, command dispatch
-│   ├── config.rs        # TOML config (serde)
+│   ├── cli.rs           # clap CLI parser, command dispatch (20+ commands)
+│   ├── config.rs        # TOML config (serde, 11 engine configs)
 │   ├── report.rs        # Report generation (JSON/SARIF/pretty/minimal)
+│   ├── community.rs     # Community features (profiles, scoring, feeds)
 │   └── engine/
-│       ├── mod.rs       # Finding/Severity types (CVSS, CIS, MITRE)
+│       ├── mod.rs       # Finding/Severity types (CVSS, CIS, MITRE, STIG, NIST)
 │       ├── sentinel.rs  # Security scanner
 │       ├── forge.rs     # Performance tuner
 │       ├── warden.rs    # Process monitor + TUI
@@ -319,7 +408,10 @@ dragonkeep
 │       ├── citadel.rs   # System hardener
 │       ├── spectre.rs   # AI/ML threat surface scanner
 │       ├── aegis.rs     # Supply chain integrity auditor
-│       └── phantom.rs   # Runtime anomaly detector
+│       ├── phantom.rs   # Runtime anomaly detector
+│       ├── hydra.rs     # Malware detection & defense
+│       ├── drake.rs     # Ransomware defense & recovery
+│       └── talon.rs     # Threat hunting & advanced threat protection
 ├── Cargo.toml
 ├── LICENSE              # MIT
 └── README.md

@@ -13,6 +13,9 @@ pub struct Config {
     pub spectre: SpectreConfig,
     pub aegis: AegisConfig,
     pub phantom: PhantomConfig,
+    pub hydra: HydraConfig,
+    pub drake: DrakeConfig,
+    pub talon: TalonConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -135,6 +138,51 @@ pub struct PhantomConfig {
     pub masquerade_detection: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HydraConfig {
+    pub enabled: bool,
+    /// Deep rootkit detection scan
+    pub rootkit_detection: bool,
+    /// Scan persistence mechanisms (systemd, cron, SSH keys)
+    pub persistence_scan: bool,
+    /// Detect webshells in web server directories
+    pub webshell_scan: bool,
+    /// Detect C2 beaconing patterns
+    pub c2_detection: bool,
+    /// Detect fileless malware (memfd, /dev/shm execution)
+    pub fileless_detection: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DrakeConfig {
+    pub enabled: bool,
+    /// Monitor for ransomware file extensions
+    pub extension_monitor: bool,
+    /// Scan for ransom note files
+    pub ransom_note_scan: bool,
+    /// Verify backup integrity and availability
+    pub backup_protection: bool,
+    /// Run entropy analysis on critical files
+    pub entropy_analysis: bool,
+    /// Monitor canary files for encryption detection
+    pub canary_monitoring: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TalonConfig {
+    pub enabled: bool,
+    /// Hunt for privilege escalation indicators
+    pub privesc_hunting: bool,
+    /// Detect data exfiltration patterns
+    pub exfil_detection: bool,
+    /// Hunt for credential access tools
+    pub credential_hunting: bool,
+    /// Analyze system logs for anomalies
+    pub log_analysis: bool,
+    /// Scan for IOC artifacts
+    pub ioc_scan: bool,
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -206,6 +254,30 @@ impl Default for Config {
                 cron_audit: true,
                 connection_scan: true,
                 masquerade_detection: true,
+            },
+            hydra: HydraConfig {
+                enabled: true,
+                rootkit_detection: true,
+                persistence_scan: true,
+                webshell_scan: true,
+                c2_detection: true,
+                fileless_detection: true,
+            },
+            drake: DrakeConfig {
+                enabled: true,
+                extension_monitor: true,
+                ransom_note_scan: true,
+                backup_protection: true,
+                entropy_analysis: true,
+                canary_monitoring: true,
+            },
+            talon: TalonConfig {
+                enabled: true,
+                privesc_hunting: true,
+                exfil_detection: true,
+                credential_hunting: true,
+                log_analysis: true,
+                ioc_scan: true,
             },
         }
     }

@@ -49,6 +49,13 @@ impl Reporter {
         });
     }
 
+    /// Get all findings across all sections
+    pub fn all_findings(&self) -> Vec<Finding> {
+        self.sections.iter()
+            .flat_map(|s| s.findings.clone())
+            .collect()
+    }
+
     fn compute_summary(&self) -> ReportSummary {
         let mut summary = ReportSummary::default();
         for section in &self.sections {

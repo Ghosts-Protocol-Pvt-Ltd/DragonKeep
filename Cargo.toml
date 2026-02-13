@@ -1,8 +1,8 @@
 [package]
 name = "dragonkeep"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
-description = "Next-gen system security, performance, and stability platform — 8 engines: Sentinel (security), Forge (performance), Warden (processes), Bastion (network), Citadel (hardening), Spectre (AI/ML threats), Aegis (supply chain), Phantom (anomaly detection)"
+description = "Next-gen system security, threat defense & performance platform — Community Edition — 11 engines: Sentinel (security), Forge (performance), Warden (processes), Bastion (network), Citadel (hardening), Spectre (AI/ML threats), Aegis (supply chain), Phantom (anomaly detection), Hydra (malware defense), Drake (ransomware defense), Talon (threat hunting)"
 license = "MIT"
 authors = ["Ghost Protocol <ghosts.lk@proton.me>"]
 repository = "https://github.com/Ghosts-Protocol-Pvt-Ltd/DragonKeep"

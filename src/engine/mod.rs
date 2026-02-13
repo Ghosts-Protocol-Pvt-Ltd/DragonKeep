@@ -6,6 +6,9 @@ pub mod citadel;
 pub mod spectre;
 pub mod aegis;
 pub mod phantom;
+pub mod hydra;
+pub mod drake;
+pub mod talon;
 
 use colored::Colorize;
 use serde::{Deserialize, Serialize};

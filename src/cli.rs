@@ -2,15 +2,16 @@ use clap::{Parser, Subcommand};
 use colored::Colorize;
 
 use crate::config::Config;
-use crate::engine::{sentinel, forge, warden, bastion, citadel, spectre, aegis, phantom};
+use crate::engine::{sentinel, forge, warden, bastion, citadel, spectre, aegis, phantom, hydra, drake, talon};
 use crate::report::Reporter;
+use crate::community;
 
 #[derive(Parser)]
 #[command(
     name = "dragonkeep",
-    about = "Next-gen system security, performance & stability platform",
+    about = "Next-gen system security, performance & stability platform — Community Edition",
     version,
-    after_help = "Examples:\n  dragonkeep scan                Full security + performance audit\n  dragonkeep scan spectre,aegis  Scan specific engines\n  dragonkeep harden              Apply security hardening\n  dragonkeep tune gaming         Optimize for gaming performance\n  dragonkeep monitor             Live system monitoring dashboard\n  dragonkeep firewall            Network security audit\n  dragonkeep report              Generate full system report\n  dragonkeep report -o out.sarif Export as SARIF (GitHub/Azure compatible)"
+    after_help = "Examples:\n  dragonkeep scan                Full security + performance audit\n  dragonkeep scan --profile quick Quick security check\n  dragonkeep malware             Malware detection & defense\n  dragonkeep ransomware          Ransomware defense scan\n  dragonkeep hunt                Proactive threat hunting\n  dragonkeep remediate           Auto-remediate threats\n  dragonkeep score               Security score & grade\n  dragonkeep harden              Apply security hardening\n  dragonkeep monitor             Live system monitoring dashboard\n  dragonkeep report -o out.sarif Export as SARIF format"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -45,9 +46,13 @@ pub enum OutputFormat {
 pub enum Command {
     /// Full security + performance scan
     Scan {
-        /// Specific modules to scan (comma-separated: sentinel,forge,spectre,aegis,phantom,warden,bastion,citadel)
+        /// Specific modules to scan (comma-separated: sentinel,forge,spectre,aegis,phantom,warden,bastion,citadel,hydra,drake,talon)
         #[arg(value_delimiter = ',')]
         modules: Option<Vec<String>>,
+
+        /// Use a community scan profile (quick, standard, deep, malware, threat-hunt, compliance, server, workstation)
+        #[arg(long)]
+        profile: Option<String>,
     },
 
     /// Security hardening — apply safe defaults
@@ -93,6 +98,37 @@ pub enum Command {
 
     /// Initialize DragonKeep config
     Init,
+
+    /// Malware detection & defense (Hydra engine)
+    Malware,
+
+    /// Ransomware defense & recovery (Drake engine)
+    Ransomware,
+
+    /// Proactive threat hunting (Talon engine)
+    Hunt,
+
+    /// Auto-remediate detected threats (safe mode by default)
+    Remediate {
+        /// Target: malware, ransomware, or all
+        #[arg(default_value = "all")]
+        target: String,
+    },
+
+    /// Calculate and display security score
+    Score,
+
+    /// Show available community scan profiles
+    Profiles,
+
+    /// Fetch and check community threat intelligence feeds
+    Feeds,
+
+    /// Deploy ransomware canary files
+    Canary,
+
+    /// Show DragonKeep Community Edition info
+    Community,
 }
 
 impl Cli {
@@ -103,8 +139,8 @@ impl Cli {
         };
 
         match self.command {
-            Some(Command::Scan { ref modules }) => {
-                self.cmd_scan(&config, modules.clone()).await
+            Some(Command::Scan { ref modules, ref profile }) => {
+                self.cmd_scan(&config, modules.clone(), profile.clone()).await
             }
             Some(Command::Harden { ref profile }) => {
                 self.cmd_harden(&config, profile).await
@@ -139,6 +175,33 @@ impl Cli {
             Some(Command::Init) => {
                 self.cmd_init().await
             }
+            Some(Command::Malware) => {
+                self.cmd_malware(&config).await
+            }
+            Some(Command::Ransomware) => {
+                self.cmd_ransomware(&config).await
+            }
+            Some(Command::Hunt) => {
+                self.cmd_hunt(&config).await
+            }
+            Some(Command::Remediate { ref target }) => {
+                self.cmd_remediate(&config, target).await
+            }
+            Some(Command::Score) => {
+                self.cmd_score(&config).await
+            }
+            Some(Command::Profiles) => {
+                self.cmd_profiles().await
+            }
+            Some(Command::Feeds) => {
+                self.cmd_feeds(&config).await
+            }
+            Some(Command::Canary) => {
+                self.cmd_canary().await
+            }
+            Some(Command::Community) => {
+                self.cmd_community().await
+            }
             None => {
                 // Default: quick status
                 self.cmd_status(&config).await
@@ -146,9 +209,22 @@ impl Cli {
         }
     }
 
-    async fn cmd_scan(&self, config: &Config, modules: Option<Vec<String>>) -> anyhow::Result<()> {
-        let run_all = modules.is_none();
-        let mods: Vec<String> = modules.unwrap_or_default();
+    async fn cmd_scan(&self, config: &Config, modules: Option<Vec<String>>, profile: Option<String>) -> anyhow::Result<()> {
+        // Resolve profile into module list
+        let effective_modules = if let Some(profile_name) = profile {
+            let profiles = community::default_profiles();
+            if let Some(p) = profiles.iter().find(|p| p.name == profile_name) {
+                Some(p.engines.clone())
+            } else {
+                eprintln!("  {} Unknown profile '{}'. Use 'dragonkeep profiles' to see available profiles.", "✗".red(), profile_name);
+                return Ok(());
+            }
+        } else {
+            modules
+        };
+
+        let run_all = effective_modules.is_none();
+        let mods: Vec<String> = effective_modules.unwrap_or_default();
         let should_run = |name: &str| run_all || mods.iter().any(|m| m == name);
 
         let mut reporter = Reporter::new();
@@ -199,6 +275,31 @@ impl Cli {
             eprintln!("{}", "  ── Phantom: Runtime Anomaly Detection ──".truecolor(180, 0, 255).bold());
             let findings = phantom::scan(config).await?;
             reporter.add_section("Runtime Anomalies", findings);
+        }
+
+        if should_run("hydra") || should_run("malware") {
+            eprintln!("{}", "  ── Hydra: Malware Detection & Defense ──".truecolor(255, 50, 50).bold());
+            let findings = hydra::scan(config).await?;
+            reporter.add_section("Malware Defense", findings);
+        }
+
+        if should_run("drake") || should_run("ransomware") {
+            eprintln!("{}", "  ── Drake: Ransomware Defense ──".truecolor(255, 0, 100).bold());
+            let findings = drake::scan(config).await?;
+            reporter.add_section("Ransomware Defense", findings);
+        }
+
+        if should_run("talon") || should_run("hunt") || should_run("threat-hunt") {
+            eprintln!("{}", "  ── Talon: Threat Hunting ──".truecolor(200, 50, 255).bold());
+            let findings = talon::hunt(config).await?;
+            reporter.add_section("Threat Hunting", findings);
+        }
+
+        // Calculate and display security score for full scans
+        if run_all {
+            let all_findings: Vec<_> = reporter.all_findings();
+            let score = community::calculate_security_score(&all_findings);
+            community::print_security_score(&score);
         }
 
         reporter.print(&self.format);
@@ -277,6 +378,9 @@ impl Cli {
         reporter.add_section("AI/ML Threats", spectre::scan(config).await?);
         reporter.add_section("Supply Chain", aegis::scan(config).await?);
         reporter.add_section("Runtime Anomalies", phantom::scan(config).await?);
+        reporter.add_section("Malware Defense", hydra::scan(config).await?);
+        reporter.add_section("Ransomware Defense", drake::scan(config).await?);
+        reporter.add_section("Threat Hunting", talon::hunt(config).await?);
 
         if let Some(path) = output {
             if path.ends_with(".sarif") || path.ends_with(".sarif.json") {
@@ -362,6 +466,100 @@ impl Cli {
         let toml_str = toml::to_string_pretty(&config)?;
         std::fs::write(&path, &toml_str)?;
         eprintln!("  {} Config created: {}", "✓".green(), path.display());
+        Ok(())
+    }
+
+    async fn cmd_malware(&self, config: &Config) -> anyhow::Result<()> {
+        eprintln!("{}", "  ── Hydra: Malware Detection & Defense ──".truecolor(255, 50, 50).bold());
+        let mut reporter = Reporter::new();
+        let findings = hydra::scan(config).await?;
+        reporter.add_section("Malware Defense", findings);
+        reporter.print(&self.format);
+        Ok(())
+    }
+
+    async fn cmd_ransomware(&self, config: &Config) -> anyhow::Result<()> {
+        eprintln!("{}", "  ── Drake: Ransomware Defense & Recovery ──".truecolor(255, 0, 100).bold());
+        let mut reporter = Reporter::new();
+        let findings = drake::scan(config).await?;
+        reporter.add_section("Ransomware Defense", findings);
+        reporter.print(&self.format);
+        Ok(())
+    }
+
+    async fn cmd_hunt(&self, config: &Config) -> anyhow::Result<()> {
+        talon::interactive_hunt(config).await
+    }
+
+    async fn cmd_remediate(&self, config: &Config, target: &str) -> anyhow::Result<()> {
+        eprintln!("{}", "  ── DragonKeep: Threat Remediation ──".red().bold());
+        eprintln!();
+
+        match target {
+            "malware" => {
+                hydra::remediate(config, self.dry_run).await?;
+            }
+            "ransomware" => {
+                drake::remediate(config, self.dry_run).await?;
+            }
+            "all" | _ => {
+                hydra::remediate(config, self.dry_run).await?;
+                eprintln!();
+                drake::remediate(config, self.dry_run).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn cmd_score(&self, config: &Config) -> anyhow::Result<()> {
+        eprintln!("{}", "  ── Running Full Security Assessment ──".green().bold());
+
+        let mut all_findings = Vec::new();
+
+        eprintln!("    {} Sentinel...", "→".dimmed());
+        all_findings.extend(sentinel::scan(config).await?);
+        eprintln!("    {} Warden...", "→".dimmed());
+        all_findings.extend(warden::scan(config).await?);
+        eprintln!("    {} Bastion...", "→".dimmed());
+        all_findings.extend(bastion::scan(config).await?);
+        eprintln!("    {} Citadel...", "→".dimmed());
+        all_findings.extend(citadel::audit(config).await?);
+        eprintln!("    {} Phantom...", "→".dimmed());
+        all_findings.extend(phantom::scan(config).await?);
+        eprintln!("    {} Hydra...", "→".dimmed());
+        all_findings.extend(hydra::scan(config).await?);
+        eprintln!("    {} Drake...", "→".dimmed());
+        all_findings.extend(drake::scan(config).await?);
+        eprintln!("    {} Talon...", "→".dimmed());
+        all_findings.extend(talon::hunt(config).await?);
+
+        let score = community::calculate_security_score(&all_findings);
+        community::print_security_score(&score);
+
+        Ok(())
+    }
+
+    async fn cmd_profiles(&self) -> anyhow::Result<()> {
+        community::print_profiles();
+        Ok(())
+    }
+
+    async fn cmd_feeds(&self, config: &Config) -> anyhow::Result<()> {
+        eprintln!("{}", "  ── Community Threat Intelligence ──".cyan().bold());
+        let mut reporter = Reporter::new();
+        let findings = community::check_against_feeds(config).await?;
+        reporter.add_section("Threat Intelligence", findings);
+        reporter.print(&self.format);
+        Ok(())
+    }
+
+    async fn cmd_canary(&self) -> anyhow::Result<()> {
+        eprintln!("{}", "  ── Drake: Deploying Ransomware Canaries ──".truecolor(255, 0, 100).bold());
+        drake::deploy_canaries(self.dry_run).await
+    }
+
+    async fn cmd_community(&self) -> anyhow::Result<()> {
+        community::print_community_status();
         Ok(())
     }
 }
