@@ -219,6 +219,9 @@ impl Cli {
 
         let mut sys = System::new_all();
         sys.refresh_all();
+        // sysinfo requires two refreshes with a delay for accurate CPU readings
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        sys.refresh_all();
 
         eprintln!("{}", "  ── System Status ──".green().bold());
 
@@ -236,13 +239,17 @@ impl Cli {
         let cpu_name = sys.cpus().first()
             .map(|c| c.brand().to_string())
             .unwrap_or_else(|| "Unknown".into());
-        let cpu_usage: f32 = sys.cpus().iter().map(|c| c.cpu_usage()).sum::<f32>() / cpu_count as f32;
+        let cpu_usage: f32 = if cpu_count > 0 {
+            sys.cpus().iter().map(|c| c.cpu_usage()).sum::<f32>() / cpu_count as f32
+        } else {
+            0.0
+        };
         eprintln!("  {} {} ({} threads, {:.0}% avg)", "CPU:".dimmed(), cpu_name, cpu_count, cpu_usage);
 
         // Memory
         let total_mem = sys.total_memory() / 1024 / 1024;
         let used_mem = sys.used_memory() / 1024 / 1024;
-        let mem_pct = (used_mem as f64 / total_mem as f64 * 100.0) as u64;
+        let mem_pct = if total_mem > 0 { (used_mem as f64 / total_mem as f64 * 100.0) as u64 } else { 0 };
         eprintln!("  {} {} / {} MB ({}%)", "RAM:".dimmed(), used_mem, total_mem, mem_pct);
 
         // Swap

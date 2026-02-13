@@ -89,7 +89,12 @@ impl Default for Config {
             general: GeneralConfig {
                 safe_mode: true,
                 log_level: "info".into(),
-                report_dir: "~/.dragonkeep/reports".into(),
+                report_dir: dirs::data_dir()
+                    .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
+                    .join("dragonkeep")
+                    .join("reports")
+                    .to_string_lossy()
+                    .to_string(),
             },
             sentinel: SentinelConfig {
                 enabled: true,

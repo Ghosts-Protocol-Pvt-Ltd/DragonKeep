@@ -49,7 +49,7 @@ pub async fn tune(_config: &Config, profile: &str, dry_run: bool) -> Result<()> 
             ("CPU governor", "performance", "cpupower frequency-set -g performance"),
             ("Swappiness", "10", "sysctl -w vm.swappiness=10"),
             ("THP", "madvise", "echo madvise > /sys/kernel/mm/transparent_hugepage/enabled"),
-            ("I/O scheduler", "none/noop", "echo none > /sys/block/*/queue/scheduler"),
+            ("I/O scheduler", "none/noop", "for s in /sys/block/*/queue/scheduler; do echo none > \"$s\" 2>/dev/null; done"),
         ],
         "ai" | "ml" => vec![
             ("CPU governor", "performance", "cpupower frequency-set -g performance"),
@@ -72,10 +72,17 @@ pub async fn tune(_config: &Config, profile: &str, dry_run: bool) -> Result<()> 
             ("Somaxconn", "65535", "sysctl -w net.core.somaxconn=65535"),
             ("TCP fin timeout", "15", "sysctl -w net.ipv4.tcp_fin_timeout=15"),
         ],
-        "balanced" | _ => vec![
+        "balanced" => vec![
             ("CPU governor", "schedutil", "cpupower frequency-set -g schedutil"),
             ("Swappiness", "60", "sysctl -w vm.swappiness=60"),
         ],
+        _ => {
+            eprintln!("  {} Unknown profile '{}', using 'balanced'", "!".yellow(), profile);
+            vec![
+                ("CPU governor", "schedutil", "cpupower frequency-set -g schedutil"),
+                ("Swappiness", "60", "sysctl -w vm.swappiness=60"),
+            ]
+        }
     };
 
     if dry_run {

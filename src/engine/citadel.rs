@@ -113,16 +113,18 @@ pub async fn harden(_config: &Config, profile: &str, dry_run: bool) -> Result<()
 async fn audit_kernel() -> Vec<Finding> {
     let mut findings = Vec::new();
 
+    // These checks complement Sentinel's kernel security checks.
+    // Sentinel checks: ASLR, kptr_restrict, dmesg_restrict, suid_dumpable, tcp_syncookies, ip_forward.
+    // Citadel checks the remaining hardening parameters:
     let checks = vec![
-        ("kernel.randomize_va_space", "2", "ASLR", "Full ASLR enabled", "ASLR not fully enabled"),
-        ("kernel.kptr_restrict", "1", "Kernel Pointers", "Kernel pointers restricted", "Kernel pointers exposed"),
-        ("kernel.dmesg_restrict", "1", "dmesg Restrict", "dmesg restricted", "dmesg accessible to all"),
         ("kernel.yama.ptrace_scope", "1", "Ptrace Scope", "Ptrace restricted", "Ptrace unrestricted"),
         ("kernel.sysrq", "0", "SysRq", "SysRq disabled", "SysRq enabled — may allow dangerous operations"),
-        ("net.ipv4.tcp_syncookies", "1", "SYN Cookies", "SYN cookies enabled", "SYN flood protection disabled"),
         ("net.ipv4.conf.all.accept_source_route", "0", "Source Routing", "Source routing disabled", "Source routing enabled"),
         ("net.ipv4.icmp_echo_ignore_broadcasts", "1", "ICMP Broadcast", "ICMP broadcast ignored", "ICMP broadcast replies enabled"),
         ("net.ipv4.conf.all.log_martians", "1", "Martian Logging", "Martian packets logged", "Martian packets not logged"),
+        ("net.ipv4.conf.all.rp_filter", "1", "Reverse Path Filter", "Reverse path filtering enabled", "Reverse path filtering disabled"),
+        ("net.ipv4.conf.all.accept_redirects", "0", "ICMP Redirects", "ICMP redirects rejected", "ICMP redirects accepted"),
+        ("net.ipv4.conf.all.send_redirects", "0", "Send Redirects", "Send redirects disabled", "Send redirects enabled"),
     ];
 
     for (key, expected, _label, pass_msg, fail_msg) in checks {
@@ -230,6 +232,8 @@ async fn audit_services() -> Vec<Finding> {
         ("avahi-daemon", "Avahi", "mDNS — disable if not needed on servers"),
     ];
 
+    let mut checked = 0usize;
+
     for (service, name, risk) in &risky_services {
         let status = tokio::process::Command::new("systemctl")
             .args(["is-active", service])
@@ -237,6 +241,7 @@ async fn audit_services() -> Vec<Finding> {
             .await;
 
         if let Ok(output) = status {
+            checked += 1;
             let state = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if state == "active" {
                 findings.push(
@@ -248,7 +253,9 @@ async fn audit_services() -> Vec<Finding> {
         }
     }
 
-    if findings.is_empty() {
+    if checked == 0 {
+        findings.push(Finding::info("Could not check services (systemctl not available)"));
+    } else if findings.is_empty() {
         findings.push(Finding::pass("No known risky services running"));
     }
 

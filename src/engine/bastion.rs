@@ -91,30 +91,9 @@ async fn check_firewall() -> Vec<Finding> {
     }
 
     // Check iptables as fallback
-    let iptables = tokio::process::Command::new("iptables")
-        .args(["-L", "-n", "--line-numbers"])
-        .output()
-        .await;
+    let mut has_firewall = false;
 
-    if let Ok(output) = iptables {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let rule_count = stdout.lines().filter(|l| !l.is_empty() && !l.starts_with("Chain") && !l.starts_with("num")).count();
-        if rule_count > 0 {
-            findings.push(Finding::info(format!("iptables has {} rules (no firewall daemon detected)", rule_count)));
-        } else {
-            findings.push(
-                Finding::warning("No active firewall detected (no firewalld, ufw, or iptables rules)")
-                    .with_fix("Install and enable a firewall: sudo systemctl enable --now firewalld"),
-            );
-        }
-    } else {
-        findings.push(
-            Finding::warning("Could not check firewall status — may need root privileges")
-                .with_fix("Run with sudo for full network audit"),
-        );
-    }
-
-    // Check nftables
+    // Check nftables first (modern replacement for iptables)
     let nft = tokio::process::Command::new("nft")
         .args(["list", "ruleset"])
         .output()
@@ -126,8 +105,32 @@ async fn check_firewall() -> Vec<Finding> {
             let table_count = stdout.lines().filter(|l| l.starts_with("table")).count();
             if table_count > 0 {
                 findings.push(Finding::pass(format!("nftables active with {} tables", table_count)));
+                has_firewall = true;
             }
         }
+    }
+
+    if !has_firewall {
+        let iptables = tokio::process::Command::new("iptables")
+            .args(["-L", "-n", "--line-numbers"])
+            .output()
+            .await;
+
+        if let Ok(output) = iptables {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let rule_count = stdout.lines().filter(|l| !l.is_empty() && !l.starts_with("Chain") && !l.starts_with("num")).count();
+            if rule_count > 0 {
+                findings.push(Finding::info(format!("iptables has {} rules (no firewall daemon detected)", rule_count)));
+                has_firewall = true;
+            }
+        }
+    }
+
+    if !has_firewall {
+        findings.push(
+            Finding::warning("No active firewall detected (no firewalld, ufw, iptables, or nftables rules)")
+                .with_fix("Install and enable a firewall: sudo systemctl enable --now firewalld"),
+        );
     }
 
     findings
@@ -150,14 +153,15 @@ async fn check_listening_services() -> Vec<Finding> {
 
             for line in stdout.lines().skip(1) {
                 let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 5 {
+                if parts.len() >= 4 {
                     let local_addr = parts[3];
-                    let process = parts.get(6).unwrap_or(&"unknown");
+                    // Process info is the last column, may be absent without root
+                    let process = if parts.len() >= 7 { parts[6] } else { "" };
 
                     if local_addr.starts_with("0.0.0.0:") || local_addr.starts_with("*:") || local_addr.starts_with(":::") {
-                        external_listeners.push(format!("{} ({})", local_addr, process));
+                        external_listeners.push(format!("{} {}", local_addr, process).trim().to_string());
                     } else {
-                        local_listeners.push(format!("{} ({})", local_addr, process));
+                        local_listeners.push(format!("{} {}", local_addr, process).trim().to_string());
                     }
                 }
             }

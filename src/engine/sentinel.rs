@@ -21,8 +21,10 @@ pub async fn scan(config: &Config) -> Result<Vec<Finding>> {
     eprintln!("    {} Checking kernel security features...", "→".dimmed());
     findings.extend(check_kernel_security().await);
 
-    eprintln!("    {} Checking file permissions...", "→".dimmed());
-    findings.extend(check_permissions().await);
+    if config.sentinel.permission_audit {
+        eprintln!("    {} Checking file permissions...", "→".dimmed());
+        findings.extend(check_permissions().await);
+    }
 
     if config.sentinel.ssh_audit {
         eprintln!("    {} Auditing SSH configuration...", "→".dimmed());
@@ -37,10 +39,10 @@ pub async fn scan(config: &Config) -> Result<Vec<Finding>> {
     if config.sentinel.port_scan {
         eprintln!("    {} Scanning open ports...", "→".dimmed());
         findings.extend(check_open_ports().await);
-    }
 
-    eprintln!("    {} Checking SUID/SGID binaries...", "→".dimmed());
-    findings.extend(check_suid_binaries().await);
+        eprintln!("    {} Checking SUID/SGID binaries...", "→".dimmed());
+        findings.extend(check_suid_binaries().await);
+    }
 
     Ok(findings)
 }
@@ -293,7 +295,7 @@ async fn check_rootkit_indicators() -> Vec<Finding> {
     match std::fs::read_to_string("/etc/ld.so.preload") {
         Ok(content) if !content.trim().is_empty() => {
             findings.push(
-                Finding::warning(format!("LD_PRELOAD entries found in /etc/ld.so.preload"))
+                Finding::warning("LD_PRELOAD entries found in /etc/ld.so.preload")
                     .with_detail(content.trim().to_string())
                     .with_fix("Verify these libraries are legitimate"),
             );

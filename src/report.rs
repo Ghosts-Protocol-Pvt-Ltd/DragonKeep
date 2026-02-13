@@ -3,7 +3,7 @@ use colored::Colorize;
 use serde::{Deserialize, Serialize};
 
 use crate::cli::OutputFormat;
-use crate::engine::Finding;
+use crate::engine::{Finding, Severity};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Report {
@@ -145,5 +145,3 @@ impl Reporter {
         Ok(())
     }
 }
-
-use crate::engine::Severity;

@@ -133,6 +133,14 @@ pub async fn monitor_tui() -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
+    // Install panic hook to restore terminal on crash
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = disable_raw_mode();
+        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        original_hook(info);
+    }));
+
     let mut sys = System::new_all();
     let tick_rate = std::time::Duration::from_secs(1);
     let mut last_tick = std::time::Instant::now();
@@ -162,7 +170,11 @@ pub async fn monitor_tui() -> Result<()> {
             // System info
             let total_mem = sys.total_memory() / 1024 / 1024;
             let used_mem = sys.used_memory() / 1024 / 1024;
-            let cpu_avg: f32 = sys.cpus().iter().map(|c| c.cpu_usage()).sum::<f32>() / sys.cpus().len() as f32;
+            let cpu_avg: f32 = if sys.cpus().is_empty() {
+                0.0
+            } else {
+                sys.cpus().iter().map(|c| c.cpu_usage()).sum::<f32>() / sys.cpus().len() as f32
+            };
             let uptime = System::uptime();
 
             let sys_info = Paragraph::new(vec![
