@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 use colored::Colorize;
 
 use crate::config::Config;
-use crate::engine::{sentinel, forge, warden, bastion, citadel};
+use crate::engine::{sentinel, forge, warden, bastion, citadel, spectre, aegis, phantom};
 use crate::report::Reporter;
 
 #[derive(Parser)]
@@ -10,7 +10,7 @@ use crate::report::Reporter;
     name = "dragonkeep",
     about = "Next-gen system security, performance & stability platform",
     version,
-    after_help = "Examples:\n  dragonkeep scan          Full security + performance audit\n  dragonkeep harden        Apply security hardening\n  dragonkeep tune gaming   Optimize for gaming performance\n  dragonkeep monitor       Live system monitoring dashboard\n  dragonkeep firewall      Network security audit\n  dragonkeep report        Generate full system report"
+    after_help = "Examples:\n  dragonkeep scan                Full security + performance audit\n  dragonkeep scan spectre,aegis  Scan specific engines\n  dragonkeep harden              Apply security hardening\n  dragonkeep tune gaming         Optimize for gaming performance\n  dragonkeep monitor             Live system monitoring dashboard\n  dragonkeep firewall            Network security audit\n  dragonkeep report              Generate full system report\n  dragonkeep report -o out.sarif Export as SARIF (GitHub/Azure compatible)"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -38,13 +38,14 @@ pub enum OutputFormat {
     Pretty,
     Json,
     Minimal,
+    Sarif,
 }
 
 #[derive(Subcommand)]
 pub enum Command {
     /// Full security + performance scan
     Scan {
-        /// Specific modules to scan
+        /// Specific modules to scan (comma-separated: sentinel,forge,spectre,aegis,phantom,warden,bastion,citadel)
         #[arg(value_delimiter = ',')]
         modules: Option<Vec<String>>,
     },
@@ -71,9 +72,18 @@ pub enum Command {
     /// Process security — find suspicious or resource-heavy processes
     Processes,
 
+    /// AI/ML threat surface scan
+    Ai,
+
+    /// Supply chain & integrity audit
+    Supply,
+
+    /// Runtime anomaly detection
+    Anomaly,
+
     /// Generate comprehensive system report
     Report {
-        /// Output file
+        /// Output file (use .sarif extension for SARIF format)
         #[arg(short, long)]
         output: Option<String>,
     },
@@ -110,6 +120,15 @@ impl Cli {
             }
             Some(Command::Processes) => {
                 self.cmd_processes(&config).await
+            }
+            Some(Command::Ai) => {
+                self.cmd_ai(&config).await
+            }
+            Some(Command::Supply) => {
+                self.cmd_supply(&config).await
+            }
+            Some(Command::Anomaly) => {
+                self.cmd_anomaly(&config).await
             }
             Some(Command::Report { ref output }) => {
                 self.cmd_report(&config, output.clone()).await
@@ -164,6 +183,24 @@ impl Cli {
             reporter.add_section("Hardening", findings);
         }
 
+        if should_run("spectre") || should_run("ai") {
+            eprintln!("{}", "  ── Spectre: AI/ML Threat Surface ──".truecolor(255, 100, 0).bold());
+            let findings = spectre::scan(config).await?;
+            reporter.add_section("AI/ML Threats", findings);
+        }
+
+        if should_run("aegis") || should_run("supply") || should_run("supply-chain") {
+            eprintln!("{}", "  ── Aegis: Supply Chain Integrity ──".truecolor(0, 200, 150).bold());
+            let findings = aegis::scan(config).await?;
+            reporter.add_section("Supply Chain", findings);
+        }
+
+        if should_run("phantom") || should_run("anomaly") || should_run("runtime") {
+            eprintln!("{}", "  ── Phantom: Runtime Anomaly Detection ──".truecolor(180, 0, 255).bold());
+            let findings = phantom::scan(config).await?;
+            reporter.add_section("Runtime Anomalies", findings);
+        }
+
         reporter.print(&self.format);
         Ok(())
     }
@@ -185,13 +222,46 @@ impl Cli {
 
     async fn cmd_firewall(&self, config: &Config) -> anyhow::Result<()> {
         eprintln!("{}", "  ── Bastion: Network Audit ──".blue().bold());
-        bastion::scan(config).await?;
+        let mut reporter = Reporter::new();
+        let findings = bastion::scan(config).await?;
+        reporter.add_section("Network", findings);
+        reporter.print(&self.format);
         Ok(())
     }
 
     async fn cmd_processes(&self, config: &Config) -> anyhow::Result<()> {
         eprintln!("{}", "  ── Warden: Process Scan ──".magenta().bold());
-        warden::scan(config).await?;
+        let mut reporter = Reporter::new();
+        let findings = warden::scan(config).await?;
+        reporter.add_section("Processes", findings);
+        reporter.print(&self.format);
+        Ok(())
+    }
+
+    async fn cmd_ai(&self, config: &Config) -> anyhow::Result<()> {
+        eprintln!("{}", "  ── Spectre: AI/ML Threat Surface ──".truecolor(255, 100, 0).bold());
+        let mut reporter = Reporter::new();
+        let findings = spectre::scan(config).await?;
+        reporter.add_section("AI/ML Threats", findings);
+        reporter.print(&self.format);
+        Ok(())
+    }
+
+    async fn cmd_supply(&self, config: &Config) -> anyhow::Result<()> {
+        eprintln!("{}", "  ── Aegis: Supply Chain Integrity ──".truecolor(0, 200, 150).bold());
+        let mut reporter = Reporter::new();
+        let findings = aegis::scan(config).await?;
+        reporter.add_section("Supply Chain", findings);
+        reporter.print(&self.format);
+        Ok(())
+    }
+
+    async fn cmd_anomaly(&self, config: &Config) -> anyhow::Result<()> {
+        eprintln!("{}", "  ── Phantom: Runtime Anomaly Detection ──".truecolor(180, 0, 255).bold());
+        let mut reporter = Reporter::new();
+        let findings = phantom::scan(config).await?;
+        reporter.add_section("Runtime Anomalies", findings);
+        reporter.print(&self.format);
         Ok(())
     }
 
@@ -204,10 +274,18 @@ impl Cli {
         reporter.add_section("Processes", warden::scan(config).await?);
         reporter.add_section("Network", bastion::scan(config).await?);
         reporter.add_section("Hardening", citadel::audit(config).await?);
+        reporter.add_section("AI/ML Threats", spectre::scan(config).await?);
+        reporter.add_section("Supply Chain", aegis::scan(config).await?);
+        reporter.add_section("Runtime Anomalies", phantom::scan(config).await?);
 
         if let Some(path) = output {
-            reporter.save_json(&path)?;
-            eprintln!("  {} Report saved: {}", "✓".green(), path);
+            if path.ends_with(".sarif") || path.ends_with(".sarif.json") {
+                reporter.save_sarif(&path)?;
+                eprintln!("  {} SARIF report saved: {}", "✓".green(), path);
+            } else {
+                reporter.save_json(&path)?;
+                eprintln!("  {} Report saved: {}", "✓".green(), path);
+            }
         } else {
             reporter.print(&self.format);
         }

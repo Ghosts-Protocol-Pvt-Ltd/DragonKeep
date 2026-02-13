@@ -10,6 +10,9 @@ pub struct Config {
     pub warden: WardenConfig,
     pub bastion: BastionConfig,
     pub citadel: CitadelConfig,
+    pub spectre: SpectreConfig,
+    pub aegis: AegisConfig,
+    pub phantom: PhantomConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -83,6 +86,55 @@ pub struct CitadelConfig {
     pub service_audit: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpectreConfig {
+    pub enabled: bool,
+    /// Scan for exposed AI/ML inference ports
+    pub port_scan: bool,
+    /// Check for leaked API keys
+    pub key_scan: bool,
+    /// Scan for unsafe model files (pickle-based)
+    pub model_scan: bool,
+    /// Check GPU memory residuals
+    pub gpu_check: bool,
+    /// Scan Python files for unsafe deserialization
+    pub deserialization_scan: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AegisConfig {
+    pub enabled: bool,
+    /// Verify critical binary integrity
+    pub binary_verification: bool,
+    /// Audit package manager security settings
+    pub package_audit: bool,
+    /// Check for EOL distro / stale kernel
+    pub currency_check: bool,
+    /// Audit container security
+    pub container_audit: bool,
+    /// Check systemd unit file integrity
+    pub systemd_audit: bool,
+    /// Scan for unsigned kernel modules
+    pub module_audit: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PhantomConfig {
+    pub enabled: bool,
+    /// Detect reverse shell patterns in process command lines
+    pub shell_detection: bool,
+    /// Scan for LD_PRELOAD injection
+    pub preload_scan: bool,
+    /// Check for deleted executables still running
+    pub deleted_exe_scan: bool,
+    /// Audit crontab entries for suspicious patterns
+    pub cron_audit: bool,
+    /// Detect unusual outbound connections
+    pub connection_scan: bool,
+    /// Check for process name masquerading
+    pub masquerade_detection: bool,
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -128,6 +180,32 @@ impl Default for Config {
                 kernel_hardening: true,
                 fs_hardening: true,
                 service_audit: true,
+            },
+            spectre: SpectreConfig {
+                enabled: true,
+                port_scan: true,
+                key_scan: true,
+                model_scan: true,
+                gpu_check: true,
+                deserialization_scan: true,
+            },
+            aegis: AegisConfig {
+                enabled: true,
+                binary_verification: true,
+                package_audit: true,
+                currency_check: true,
+                container_audit: true,
+                systemd_audit: true,
+                module_audit: true,
+            },
+            phantom: PhantomConfig {
+                enabled: true,
+                shell_detection: true,
+                preload_scan: true,
+                deleted_exe_scan: true,
+                cron_audit: true,
+                connection_scan: true,
+                masquerade_detection: true,
             },
         }
     }
