@@ -190,9 +190,11 @@ impl Default for Config {
                 safe_mode: true,
                 log_level: "info".into(),
                 report_dir: dirs::data_dir()
-                    .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
-                    .join("dragonkeep")
-                    .join("reports")
+                    .map(|d| d.join("dragonkeep").join("reports"))
+                    .unwrap_or_else(|| {
+                        // SECURITY: Never fall back to /tmp — use a safe default
+                        std::path::PathBuf::from("/var/lib/dragonkeep/reports")
+                    })
                     .to_string_lossy()
                     .to_string(),
             },
@@ -294,15 +296,73 @@ impl Config {
     pub fn load_or_default() -> Result<Self> {
         let path = Self::default_path();
         if path.exists() {
-            Self::load_from(path.to_str().unwrap_or(""))
+            match path.to_str() {
+                Some(p) if !p.is_empty() => Self::load_from(p),
+                _ => {
+                    eprintln!("  {} Config path is not valid UTF-8, using defaults", "!".to_string());
+                    Ok(Self::default())
+                }
+            }
         } else {
             Ok(Self::default())
         }
     }
 
     pub fn load_from(path: &str) -> Result<Self> {
-        let content = std::fs::read_to_string(path)?;
-        let config: Config = toml::from_str(&content)?;
+        // SECURITY: Validate config path before loading
+        if path.is_empty() {
+            return Err(anyhow::anyhow!("Config path cannot be empty"));
+        }
+        let config_path = std::path::Path::new(path);
+
+        // Canonicalize to resolve symlinks and prevent path traversal
+        let canonical = config_path.canonicalize()
+            .map_err(|e| anyhow::anyhow!("Cannot resolve config path '{}': {}", path, e))?;
+
+        // Verify it's a .toml file to prevent loading arbitrary files
+        match canonical.extension() {
+            Some(ext) if ext == "toml" => {},
+            _ => return Err(anyhow::anyhow!(
+                "Config file must have .toml extension, got: '{}'", canonical.display()
+            )),
+        }
+
+        let content = std::fs::read_to_string(&canonical)?;
+        let mut config: Config = toml::from_str(&content)?;
+
+        // SECURITY: Validate thresholds to prevent self-DoS or evasion
+        config.validate_thresholds();
+
         Ok(config)
+    }
+}
+
+impl Config {
+    /// Validate and clamp configuration thresholds to safe ranges
+    fn validate_thresholds(&mut self) {
+        // Warden thresholds
+        if self.warden.cpu_threshold < 1.0 || self.warden.cpu_threshold > 100.0 {
+            eprintln!("  {} cpu_threshold out of range ({:.1}), clamping to 1.0-100.0", "!".to_string(), self.warden.cpu_threshold);
+            self.warden.cpu_threshold = self.warden.cpu_threshold.clamp(1.0, 100.0);
+        }
+        if self.warden.memory_threshold < 1.0 || self.warden.memory_threshold > 100.0 {
+            eprintln!("  {} memory_threshold out of range ({:.1}), clamping to 1.0-100.0", "!".to_string(), self.warden.memory_threshold);
+            self.warden.memory_threshold = self.warden.memory_threshold.clamp(1.0, 100.0);
+        }
+        // Prevent tight-loop DoS: minimum 100ms refresh 
+        if self.warden.refresh_interval == 0 {
+            eprintln!("  {} refresh_interval cannot be 0, setting to 500ms", "!".to_string());
+            self.warden.refresh_interval = 500;
+        }
+        if self.warden.refresh_interval > 3_600_000 {
+            eprintln!("  {} refresh_interval too large, capping at 1 hour", "!".to_string());
+            self.warden.refresh_interval = 3_600_000;
+        }
+
+        // Validate report_dir is not in /tmp
+        if self.general.report_dir.starts_with("/tmp") {
+            eprintln!("  {} report_dir in /tmp is insecure, using /var/lib/dragonkeep/reports", "!".to_string());
+            self.general.report_dir = "/var/lib/dragonkeep/reports".to_string();
+        }
     }
 }

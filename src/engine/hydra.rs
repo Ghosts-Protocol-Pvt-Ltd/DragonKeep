@@ -798,15 +798,27 @@ pub async fn remediate(config: &Config, dry_run: bool) -> Result<()> {
     let mut sys = sysinfo::System::new_all();
     sys.refresh_all();
 
+    // SECURITY: Audit log all remediation actions
+    let audit_log_path = "/var/lib/dragonkeep/audit.log";
+    let _ = std::fs::create_dir_all("/var/lib/dragonkeep");
+    let mut audit_entries: Vec<String> = Vec::new();
+    let audit_timestamp = chrono::Utc::now().to_rfc3339();
+
     for (_pid, process) in sys.processes() {
         let name = process.name().to_string_lossy().to_lowercase();
+        // SECURITY: Match against full executable path for more reliable detection
+        let exe_path = process.exe()
+            .map(|p| p.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
         for &(pattern, desc, _) in MALWARE_PROCESSES {
-            if name.contains(pattern) {
+            if name.contains(pattern) || exe_path.contains(pattern) {
                 if dry_run || config.general.safe_mode {
-                    eprintln!("    {} [DRY RUN] Would kill: {} (PID {}) — {}", "→".yellow(),
-                        name, process.pid(), desc);
+                    eprintln!("    {} [DRY RUN] Would kill: {} (PID {} exe:{}) — {}", "→".yellow(),
+                        name, process.pid(), exe_path, desc);
                 } else {
-                    eprintln!("    {} Killing: {} (PID {}) — {}", "✗".red(), name, process.pid(), desc);
+                    eprintln!("    {} Killing: {} (PID {} exe:{}) — {}", "✗".red(), name, process.pid(), exe_path, desc);
+                    audit_entries.push(format!("[{}] KILL pid={} name={} exe={} reason={}",
+                        audit_timestamp, process.pid(), name, exe_path, desc));
                     process.kill();
                 }
             }
@@ -831,10 +843,25 @@ pub async fn remediate(config: &Config, dry_run: bool) -> Result<()> {
                         if dry_run || config.general.safe_mode {
                             eprintln!("    {} [DRY RUN] Would quarantine: {}", "→".yellow(), path.display());
                         } else {
-                            let dest = format!("{}/{}", quarantine_dir,
-                                entry.file_name().to_string_lossy());
-                            if std::fs::rename(&path, &dest).is_ok() {
-                                eprintln!("    {} Quarantined: {} → {}", "✓".green(), path.display(), dest);
+                            // SECURITY: Generate unique quarantine filename to prevent collisions
+                            let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+                            let original_name = entry.file_name().to_string_lossy().to_string();
+                            let dest = format!("{}/{}_{}", quarantine_dir, timestamp, original_name);
+                            // Try rename first, fall back to copy+delete for cross-device
+                            match std::fs::rename(&path, &dest) {
+                                Ok(()) => {
+                                    eprintln!("    {} Quarantined: {} → {}", "✓".green(), path.display(), dest);
+                                }
+                                Err(ref e) if e.raw_os_error() == Some(18) => {
+                                    // EXDEV: cross-device rename — use copy then secure delete
+                                    if std::fs::copy(&path, &dest).is_ok() {
+                                        let _ = std::fs::remove_file(&path);
+                                        eprintln!("    {} Quarantined (cross-device): {} → {}", "✓".green(), path.display(), dest);
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("    {} Failed to quarantine {}: {}", "✗".red(), path.display(), e);
+                                }
                             }
                         }
                     }
@@ -845,6 +872,14 @@ pub async fn remediate(config: &Config, dry_run: bool) -> Result<()> {
 
     // 3. Disable suspicious systemd services
     eprintln!("    {} Disabling suspicious services...", "→".dimmed());
+    // SECURITY: Whitelist of legitimate system services that must never be disabled
+    let service_whitelist: &[&str] = &[
+        "systemd-tmpfiles-clean", "systemd-journald", "systemd-logind",
+        "systemd-resolved", "systemd-networkd", "systemd-timesyncd",
+        "systemd-udevd", "dbus", "NetworkManager", "sshd", "cron",
+        "rsyslog", "auditd", "firewalld", "iptables", "docker",
+        "containerd", "snapd", "polkit", "accounts-daemon",
+    ];
     let systemd_paths = ["/etc/systemd/system", "/usr/lib/systemd/system"];
     for dir in &systemd_paths {
         if let Ok(entries) = std::fs::read_dir(dir) {
@@ -856,9 +891,17 @@ pub async fn remediate(config: &Config, dry_run: bool) -> Result<()> {
                             let cl = content.to_lowercase();
                             if cl.contains("/tmp/") || cl.contains("/dev/shm/") || cl.contains("base64") {
                                 let svc_name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                                // SECURITY: Never disable whitelisted system services
+                                let base_name = svc_name.trim_end_matches(".service").trim_end_matches(".timer");
+                                if service_whitelist.iter().any(|&w| base_name == w) {
+                                    eprintln!("    {} Skipping whitelisted service: {}", "ℹ".blue(), svc_name);
+                                    continue;
+                                }
                                 if dry_run || config.general.safe_mode {
                                     eprintln!("    {} [DRY RUN] Would disable: {}", "→".yellow(), svc_name);
                                 } else {
+                                    audit_entries.push(format!("[{}] DISABLE_SERVICE name={}",
+                                        audit_timestamp, svc_name));
                                     let _ = tokio::process::Command::new("systemctl")
                                         .args(["disable", "--now", &svc_name])
                                         .output()
@@ -869,6 +912,16 @@ pub async fn remediate(config: &Config, dry_run: bool) -> Result<()> {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    // SECURITY: Flush audit log of all remediation actions
+    if !audit_entries.is_empty() {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(audit_log_path) {
+            for entry in &audit_entries {
+                let _ = writeln!(f, "{}", entry);
             }
         }
     }

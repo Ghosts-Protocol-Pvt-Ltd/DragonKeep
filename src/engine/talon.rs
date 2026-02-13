@@ -26,6 +26,27 @@ use colored::Colorize;
 use crate::config::Config;
 use crate::engine::Finding;
 
+/// SECURITY: Read only the tail of a log file with a size cap to prevent OOM on large logs.
+/// Reads at most `max_bytes` from the end of the file, returning lines.
+async fn read_log_tail(path: &str, max_bytes: u64) -> std::io::Result<String> {
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+    let mut file = tokio::fs::File::open(path).await?;
+    let meta = file.metadata().await?;
+    let len = meta.len();
+    if len > max_bytes {
+        file.seek(std::io::SeekFrom::End(-(max_bytes as i64))).await?;
+    }
+    let mut buf = String::with_capacity(std::cmp::min(len, max_bytes) as usize);
+    file.read_to_string(&mut buf).await?;
+    // If we seeked into the middle of a line, drop the first partial line
+    if len > max_bytes {
+        if let Some(pos) = buf.find('\n') {
+            buf.drain(..=pos);
+        }
+    }
+    Ok(buf)
+}
+
 /// IOC types for threat hunting
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -230,7 +251,8 @@ async fn hunt_lateral_movement() -> Vec<Finding> {
     // Check SSH logs for lateral movement
     let ssh_log_paths = ["/var/log/auth.log", "/var/log/secure"];
     for log_path in &ssh_log_paths {
-        if let Ok(content) = tokio::fs::read_to_string(log_path).await {
+        // SECURITY: Bounded read — max 10MB tail to prevent OOM on large log files
+        if let Ok(content) = read_log_tail(log_path, 10 * 1024 * 1024).await {
             let lines: Vec<&str> = content.lines().collect();
             let recent_lines = &lines[lines.len().saturating_sub(500)..];
 
@@ -321,7 +343,8 @@ async fn hunt_privilege_escalation() -> Vec<Finding> {
     }
 
     // Check sudo logs for suspicious commands
-    if let Ok(content) = tokio::fs::read_to_string("/var/log/auth.log").await {
+    // SECURITY: Bounded read — max 10MB tail to prevent OOM
+    if let Ok(content) = read_log_tail("/var/log/auth.log", 10 * 1024 * 1024).await {
         let lines: Vec<&str> = content.lines().collect();
         let recent = &lines[lines.len().saturating_sub(200)..];
 

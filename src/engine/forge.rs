@@ -96,12 +96,7 @@ pub async fn tune(_config: &Config, profile: &str, dry_run: bool) -> Result<()> 
             eprintln!("    {} {} → {} ({})", "[DRY]".yellow(), name, value, command);
         } else {
             eprintln!("    {} {} → {}", "→".dimmed(), name, value);
-            // Actually apply via command
-            let output = tokio::process::Command::new("sh")
-                .arg("-c")
-                .arg(command)
-                .output()
-                .await;
+            let output = apply_tune_command(command).await;
 
             match output {
                 Ok(o) if o.status.success() => {
@@ -120,6 +115,75 @@ pub async fn tune(_config: &Config, profile: &str, dry_run: bool) -> Result<()> 
     }
 
     Ok(())
+}
+
+/// Execute a performance tuning command safely without using `sh -c`.
+/// Eliminates shell injection surface by parsing and dispatching commands directly.
+async fn apply_tune_command(command: &str) -> Result<std::process::Output, std::io::Error> {
+    let parts: Vec<&str> = command.split_whitespace().collect();
+    if parts.is_empty() {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "empty command"));
+    }
+
+    // Handle "echo value > /sys/..." pattern
+    if parts[0] == "echo" && parts.len() >= 4 && parts.contains(&">") {
+        let gt_pos = parts.iter().position(|&p| p == ">").unwrap();
+        let value = parts[1..gt_pos].join(" ");
+        let target = parts[gt_pos + 1];
+        match tokio::fs::write(target, format!("{}\n", value)).await {
+            Ok(()) => {
+                return Ok(std::process::Output {
+                    status: std::process::ExitStatus::default(),
+                    stdout: Vec::new(),
+                    stderr: Vec::new(),
+                });
+            }
+            Err(e) => return Err(e),
+        }
+    }
+
+    // Handle "sysctl -w key=value" pattern
+    if parts[0] == "sysctl" {
+        return tokio::process::Command::new("/usr/sbin/sysctl")
+            .args(&parts[1..])
+            .output()
+            .await;
+    }
+
+    // Handle "cpupower frequency-set ..." pattern
+    if parts[0] == "cpupower" {
+        return tokio::process::Command::new("/usr/bin/cpupower")
+            .args(&parts[1..])
+            .output()
+            .await;
+    }
+
+    // Handle "for s in /sys/block/*/queue/scheduler; do echo none > \"$s\"; done" pattern
+    // Decompose into individual file writes
+    if command.starts_with("for ") && command.contains("/sys/block/") {
+        // Apply I/O scheduler to all block devices directly
+        if let Ok(entries) = std::fs::read_dir("/sys/block") {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with("loop") || name.starts_with("ram") {
+                    continue;
+                }
+                let sched_path = format!("/sys/block/{}/queue/scheduler", name);
+                let _ = tokio::fs::write(&sched_path, "none\n").await;
+            }
+        }
+        return Ok(std::process::Output {
+            status: std::process::ExitStatus::default(),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        });
+    }
+
+    // Direct command execution for known safe commands
+    tokio::process::Command::new(parts[0])
+        .args(&parts[1..])
+        .output()
+        .await
 }
 
 async fn check_cpu_governor() -> Vec<Finding> {

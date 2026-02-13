@@ -271,9 +271,22 @@ pub fn print_security_score(score: &SecurityScore) {
 pub async fn fetch_threat_feeds() -> Result<Vec<String>> {
     let mut blocked_ips = Vec::new();
 
+    // SECURITY: Use a client with timeouts to prevent hanging on unresponsive feeds
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .https_only(true)
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+
     for &(name, url) in COMMUNITY_FEEDS {
+        // SECURITY: Enforce HTTPS for all feed URLs
+        if !url.starts_with("https://") {
+            eprintln!("    {} Skipping {} — non-HTTPS URL rejected", "✗".red(), name);
+            continue;
+        }
         eprintln!("    {} Fetching {} feed...", "→".dimmed(), name);
-        match reqwest::get(url).await {
+        match client.get(url).send().await {
             Ok(resp) => {
                 if let Ok(body) = resp.text().await {
                     let ips: Vec<String> = body.lines()

@@ -17,6 +17,13 @@ const BANNER: &str = r#"
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // SECURITY: Harden PATH to prevent PATH injection/hijacking attacks
+    // Only allow standard system directories for subprocess execution
+    // SAFETY: Called at startup before any threads are spawned, so no data races
+    unsafe {
+        std::env::set_var("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()

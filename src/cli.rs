@@ -502,10 +502,14 @@ impl Cli {
             "ransomware" => {
                 drake::remediate(config, self.dry_run).await?;
             }
-            "all" | _ => {
+            "all" => {
                 hydra::remediate(config, self.dry_run).await?;
                 eprintln!();
                 drake::remediate(config, self.dry_run).await?;
+            }
+            unknown => {
+                eprintln!("  {} Unknown remediation target: '{}'. Valid targets: malware, ransomware, all", "✗".red(), unknown);
+                return Err(anyhow::anyhow!("Unknown remediation target: '{}'. Valid targets: malware, ransomware, all", unknown));
             }
         }
         Ok(())

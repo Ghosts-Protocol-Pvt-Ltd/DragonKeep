@@ -203,9 +203,9 @@ impl Reporter {
     /// Compatible with GitHub Code Scanning, Azure DevOps, and other SARIF consumers
     fn build_sarif(&self) -> anyhow::Result<String> {
         use serde_json::json;
-        use sysinfo::System;
 
-        let hostname = System::host_name().unwrap_or_else(|| "unknown".into());
+        // SECURITY: Redact hostname from SARIF to prevent information disclosure in shared reports
+        let hostname = "[redacted]".to_string();
         let timestamp = Utc::now().to_rfc3339();
 
         let mut rules = Vec::new();
@@ -330,7 +330,7 @@ impl Reporter {
                 "invocations": [{
                     "executionSuccessful": true,
                     "endTimeUtc": timestamp,
-                    "machine": hostname
+                    "machine": "[redacted]"
                 }]
             }]
         });
@@ -344,7 +344,10 @@ impl Reporter {
         if let Some(parent) = std::path::Path::new(path).parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(path, json)?;
+        // SECURITY: Atomic write — write to temp then rename to prevent partial reports
+        let tmp_path = format!("{}.tmp.{}", path, std::process::id());
+        std::fs::write(&tmp_path, &json)?;
+        std::fs::rename(&tmp_path, path)?;
         Ok(())
     }
 
@@ -353,7 +356,10 @@ impl Reporter {
         if let Some(parent) = std::path::Path::new(path).parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(path, sarif)?;
+        // SECURITY: Atomic write — write to temp then rename to prevent partial reports
+        let tmp_path = format!("{}.tmp.{}", path, std::process::id());
+        std::fs::write(&tmp_path, &sarif)?;
+        std::fs::rename(&tmp_path, path)?;
         Ok(())
     }
 }

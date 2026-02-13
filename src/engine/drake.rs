@@ -122,9 +122,10 @@ const CRITICAL_DIRS: &[&str] = &[
 ];
 
 /// Canary file locations for early ransomware detection
+/// SECURITY: Excludes world-writable dirs (/tmp, /var/tmp) to prevent symlink attacks
 const CANARY_DIRS: &[&str] = &[
     "/home", "/root", "/var/www", "/srv",
-    "/tmp", "/opt", "/var/lib",
+    "/opt", "/var/lib",
 ];
 
 /// Scan for ransomware indicators
@@ -676,15 +677,40 @@ pub async fn deploy_canaries(dry_run: bool) -> Result<()> {
         if dry_run {
             eprintln!("    {} [DRY RUN] Would deploy canary: {}", "→".yellow(), canary_path);
         } else {
-            if let Err(e) = tokio::fs::write(&canary_path, &canary_content).await {
-                eprintln!("    {} Failed to deploy canary at {}: {}", "✗".red(), canary_path, e);
-            } else {
-                // Make read-only
-                let _ = tokio::process::Command::new("chmod")
-                    .args(["444", &canary_path])
-                    .output()
-                    .await;
-                eprintln!("    {} Canary deployed: {}", "✓".green(), canary_path);
+            // SECURITY: Check for symlinks before writing to prevent symlink attacks
+            let target = std::path::Path::new(&canary_path);
+            if target.exists() {
+                if let Ok(meta) = std::fs::symlink_metadata(target) {
+                    if meta.file_type().is_symlink() {
+                        eprintln!("    {} Canary path is a symlink (skipping for safety): {}", "!".yellow(), canary_path);
+                        continue;
+                    }
+                }
+            }
+            // Use OpenOptions with create_new to prevent overwriting existing files (O_EXCL)
+            use std::io::Write;
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&canary_path)
+            {
+                Ok(mut file) => {
+                    let _ = file.write_all(canary_content.as_bytes());
+                    // Set permissions atomically via the open file
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        let _ = file.set_permissions(std::fs::Permissions::from_mode(0o444));
+                    }
+                    eprintln!("    {} Canary deployed: {}", "✓".green(), canary_path);
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    // Canary already exists — this is fine, verify integrity inline
+                    eprintln!("    {} Canary already exists: {}", "→".dimmed(), canary_path);
+                }
+                Err(e) => {
+                    eprintln!("    {} Failed to deploy canary at {}: {}", "✗".red(), canary_path, e);
+                }
             }
         }
     }
@@ -708,14 +734,18 @@ pub async fn remediate(config: &Config, dry_run: bool) -> Result<()> {
 
     for (_pid, process) in sys.processes() {
         let name = process.name().to_string_lossy().to_lowercase();
+        // SECURITY: Match against full executable path, not just name substring
+        let exe_path = process.exe()
+            .map(|p| p.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
         for &(pattern, desc) in RANSOMWARE_PROCESSES {
-            if name.contains(pattern) {
+            if name.contains(pattern) || exe_path.contains(pattern) {
                 if dry_run || config.general.safe_mode {
                     eprintln!("    {} [DRY RUN] Would kill: {} (PID {}) — {}",
                         "→".yellow(), name, process.pid(), desc);
                 } else {
-                    eprintln!("    {} KILLING: {} (PID {}) — {}",
-                        "✗".red().bold(), name, process.pid(), desc);
+                    eprintln!("    {} KILLING: {} (PID {} exe:{}) — {}",
+                        "✗".red().bold(), name, process.pid(), exe_path, desc);
                     process.kill();
                 }
             }

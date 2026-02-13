@@ -215,6 +215,12 @@ fn scan_dir_for_models(dir: &str, dangerous: &mut Vec<String>, world_readable: &
 
     for entry in entries.flatten() {
         let path = entry.path();
+        // SECURITY: Skip symlinks to prevent traversal outside scan scope
+        if let Ok(meta) = std::fs::symlink_metadata(&path) {
+            if meta.file_type().is_symlink() {
+                continue;
+            }
+        }
         if path.is_dir() {
             let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
             if name.starts_with('.') || name == "node_modules" || name == "__pycache__" {
@@ -280,9 +286,15 @@ async fn scan_api_keys(findings: &mut Vec<Finding>) {
         if let Ok(content) = std::fs::read_to_string(file_path) {
             for (key, service) in KEY_PATTERNS {
                 if content.contains(key) {
+                    // SECURITY: Report file and key name only — never include line content
+                    // to prevent leaking actual secret values in scan output
+                    let line_num = content.lines().enumerate()
+                        .find(|(_, l)| l.contains(key))
+                        .map(|(i, _)| i + 1)
+                        .unwrap_or(0);
                     findings.push(
                         Finding::high(format!("{} API key hardcoded in {}", service, file_path))
-                            .with_detail("Hardcoded API keys persist across sessions and may be committed to version control")
+                            .with_detail(format!("API key '{}' found at line {} — hardcoded keys persist across sessions and may be committed to version control", key, line_num))
                             .with_fix(format!("Remove {} from {} and use a secrets manager", key, file_path))
                             .with_cvss(7.5)
                             .with_mitre(vec!["T1552.001", "T1552.004"])
@@ -392,6 +404,12 @@ fn find_unsafe_python_loads(dir: &str, results: &mut Vec<(String, String)>, dept
 
     for entry in entries.flatten() {
         let path = entry.path();
+        // SECURITY: Skip symlinks to prevent traversal outside scan scope
+        if let Ok(meta) = std::fs::symlink_metadata(&path) {
+            if meta.file_type().is_symlink() {
+                continue;
+            }
+        }
         if path.is_dir() {
             let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
             if name.starts_with('.') || name == "node_modules" || name == "__pycache__" || name == "venv" || name == ".venv" {
