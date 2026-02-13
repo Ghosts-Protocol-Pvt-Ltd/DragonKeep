@@ -1,6 +1,6 @@
 [package]
 name = "dragonkeep"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "Next-gen system security, performance, and stability platform — 8 engines: Sentinel (security), Forge (performance), Warden (processes), Bastion (network), Citadel (hardening), Spectre (AI/ML threats), Aegis (supply chain), Phantom (anomaly detection)"
 license = "MIT"

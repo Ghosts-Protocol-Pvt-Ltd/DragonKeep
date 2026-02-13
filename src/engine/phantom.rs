@@ -1,9 +1,15 @@
 //! Phantom Engine — Runtime Anomaly Detector
 //!
-//! Performs deep inspection of running processes for indicators of compromise:
-//! binary entropy analysis, PID namespace anomalies, LD_PRELOAD injection,
-//! ptrace attachment, /proc manipulation, crontab backdoors, reverse shell
-//! patterns, and unusual outbound connections.
+//! Deep inspection of running processes for indicators of compromise:
+//!   - Reverse shell detection (ATT&CK T1059, Atomic Red Team T1059.004)
+//!   - LD_PRELOAD injection (ATT&CK T1574.006, DISA STIG V-230222)
+//!   - Fileless malware via memfd_create (ATT&CK T1620)
+//!   - Ptrace-based process injection (ATT&CK T1055.008, STIG V-230269)
+//!   - Crontab backdoor detection (ATT&CK T1053.003, STIG V-230324)
+//!   - Process masquerading & hidden artifacts
+//!   - Namespace manipulation / container escape vectors
+//!
+//! Standards: MITRE ATT&CK, NIST SP 800-53 Rev 5, DISA STIG RHEL-08
 
 use crate::config::Config;
 use crate::engine::Finding;
@@ -45,34 +51,15 @@ pub async fn scan(config: &Config) -> anyhow::Result<Vec<Finding>> {
 
     let mut findings = Vec::new();
 
-    // 1. Scan process command lines for reverse shells
     scan_process_cmdlines(&mut findings).await;
-
-    // 2. Detect LD_PRELOAD injection across all processes
     scan_ld_preload_injection(&mut findings).await;
-
-    // 3. Check for deleted executables still running
     scan_deleted_executables(&mut findings).await;
-
-    // 4. Detect ptrace-attached processes
     scan_ptrace_attachment(&mut findings).await;
-
-    // 5. Check for memfd_create abuse (fileless malware)
     scan_memfd_abuse(&mut findings).await;
-
-    // 6. Audit crontab entries for backdoors
     scan_crontab_backdoors(&mut findings).await;
-
-    // 7. Detect unusual outbound connections
     scan_outbound_connections(&mut findings).await;
-
-    // 8. Check for process masquerading
     scan_process_masquerading(&mut findings).await;
-
-    // 9. Detect hidden files in suspicious locations
     scan_hidden_artifacts(&mut findings).await;
-
-    // 10. Check for namespace manipulation
     scan_namespace_anomalies(&mut findings).await;
 
     if findings.is_empty() {
@@ -87,6 +74,7 @@ pub async fn scan(config: &Config) -> anyhow::Result<Vec<Finding>> {
 }
 
 /// Scan all process command lines for reverse shell indicators
+/// ATT&CK T1059.004 (Unix Shell), Atomic Red Team T1059.004
 async fn scan_process_cmdlines(findings: &mut Vec<Finding>) {
     let proc_dir = match std::fs::read_dir("/proc") {
         Ok(d) => d,
@@ -106,7 +94,6 @@ async fn scan_process_cmdlines(findings: &mut Vec<Finding>) {
 
             for pattern in REVERSE_SHELL_PATTERNS {
                 if cmdline_str.contains(&pattern.to_lowercase()) {
-                    // Get the process exe for context
                     let exe = std::fs::read_link(format!("/proc/{}/exe", name))
                         .map(|p| p.to_string_lossy().to_string())
                         .unwrap_or_else(|_| "unknown".into());
@@ -116,7 +103,9 @@ async fn scan_process_cmdlines(findings: &mut Vec<Finding>) {
                             .with_detail(format!("Pattern: '{}' in command: {}", pattern, cmdline_str.trim()))
                             .with_fix(format!("Kill immediately: kill -9 {} && investigate compromise vector", name))
                             .with_cvss(9.8)
-                            .with_mitre(vec!["T1059", "T1071.001", "T1572"])
+                            .with_mitre(vec!["T1059.004", "T1071.001", "T1572"])
+                            .with_stig("V-230223")
+                            .with_nist(vec!["SI-4", "IR-4", "SI-3"])
                             .with_engine("Phantom")
                             .with_rule("DK-PHA-001"),
                     );
@@ -127,7 +116,8 @@ async fn scan_process_cmdlines(findings: &mut Vec<Finding>) {
     }
 }
 
-/// Check all processes for LD_PRELOAD injection (beyond just /etc)
+/// Check all processes for LD_PRELOAD injection
+/// ATT&CK T1574.006 (Dynamic Linker Hijacking), DISA STIG V-230222
 async fn scan_ld_preload_injection(findings: &mut Vec<Finding>) {
     // Check global /etc/ld.so.preload
     if let Ok(content) = std::fs::read_to_string("/etc/ld.so.preload") {
@@ -135,7 +125,7 @@ async fn scan_ld_preload_injection(findings: &mut Vec<Finding>) {
             .map(|l| l.trim())
             .filter(|l| !l.is_empty() && !l.starts_with('#'))
             .collect();
-        
+
         if !libraries.is_empty() {
             findings.push(
                 Finding::critical(format!("System-wide LD_PRELOAD active: {}", libraries.join(", ")))
@@ -143,6 +133,8 @@ async fn scan_ld_preload_injection(findings: &mut Vec<Finding>) {
                     .with_fix("Investigate and remove: cat /etc/ld.so.preload && > /etc/ld.so.preload")
                     .with_cvss(9.8)
                     .with_mitre(vec!["T1574.006", "T1014"])
+                    .with_stig("V-230222")
+                    .with_nist(vec!["SI-7", "SI-3"])
                     .with_engine("Phantom")
                     .with_rule("DK-PHA-002"),
             );
@@ -155,7 +147,7 @@ async fn scan_ld_preload_injection(findings: &mut Vec<Finding>) {
         Err(_) => return,
     };
 
-    let mut preloaded_pids: Vec<(String, String, String)> = Vec::new(); // (pid, lib, exe)
+    let mut preloaded_pids: Vec<(String, String, String)> = Vec::new();
 
     for entry in proc_dir.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
@@ -164,7 +156,6 @@ async fn scan_ld_preload_injection(findings: &mut Vec<Finding>) {
         let environ_path = format!("/proc/{}/environ", name);
         if let Ok(environ) = std::fs::read(&environ_path) {
             let environ_str = String::from_utf8_lossy(&environ);
-            // environ entries are null-separated
             for env_var in environ_str.split('\0') {
                 if env_var.starts_with("LD_PRELOAD=") {
                     let lib = env_var.trim_start_matches("LD_PRELOAD=").to_string();
@@ -187,6 +178,8 @@ async fn scan_ld_preload_injection(findings: &mut Vec<Finding>) {
                     .with_fix(format!("Investigate: ls -la {} && kill {} if unauthorized", lib, pid))
                     .with_cvss(8.4)
                     .with_mitre(vec!["T1574.006", "T1055.009"])
+                    .with_stig("V-230222")
+                    .with_nist(vec!["SI-7"])
                     .with_engine("Phantom")
                     .with_rule("DK-PHA-003"),
             );
@@ -195,6 +188,7 @@ async fn scan_ld_preload_injection(findings: &mut Vec<Finding>) {
 }
 
 /// Check for processes running from deleted executables
+/// ATT&CK T1070.004 (Indicator Removal: File Deletion)
 async fn scan_deleted_executables(findings: &mut Vec<Finding>) {
     let proc_dir = match std::fs::read_dir("/proc") {
         Ok(d) => d,
@@ -209,7 +203,6 @@ async fn scan_deleted_executables(findings: &mut Vec<Finding>) {
         if let Ok(target) = std::fs::read_link(&exe_link) {
             let target_str = target.to_string_lossy().to_string();
             if target_str.contains(" (deleted)") {
-                // Get command line for context
                 let cmdline = std::fs::read_to_string(format!("/proc/{}/cmdline", name))
                     .unwrap_or_default()
                     .replace('\0', " ");
@@ -220,6 +213,7 @@ async fn scan_deleted_executables(findings: &mut Vec<Finding>) {
                         .with_fix(format!("Investigate: cat /proc/{}/maps && kill {} if suspicious", name, name))
                         .with_cvss(7.8)
                         .with_mitre(vec!["T1070.004", "T1059"])
+                        .with_nist(vec!["SI-4", "AU-6"])
                         .with_engine("Phantom")
                         .with_rule("DK-PHA-004"),
                 );
@@ -229,6 +223,7 @@ async fn scan_deleted_executables(findings: &mut Vec<Finding>) {
 }
 
 /// Detect ptrace attachment (debugging/injection)
+/// ATT&CK T1055.008 (Ptrace System Calls), DISA STIG V-230269
 async fn scan_ptrace_attachment(findings: &mut Vec<Finding>) {
     let proc_dir = match std::fs::read_dir("/proc") {
         Ok(d) => d,
@@ -247,7 +242,7 @@ async fn scan_ptrace_attachment(findings: &mut Vec<Finding>) {
                         .nth(1)
                         .unwrap_or("0")
                         .trim();
-                    
+
                     if tracer_pid != "0" {
                         let process_name = status.lines()
                             .find(|l| l.starts_with("Name:"))
@@ -258,8 +253,7 @@ async fn scan_ptrace_attachment(findings: &mut Vec<Finding>) {
                             .map(|p| p.to_string_lossy().to_string())
                             .unwrap_or_else(|_| "unknown".into());
 
-                        // Skip legitimate debuggers
-                        if tracer_exe.contains("gdb") || tracer_exe.contains("lldb") 
+                        if tracer_exe.contains("gdb") || tracer_exe.contains("lldb")
                             || tracer_exe.contains("strace") || tracer_exe.contains("ltrace") {
                             continue;
                         }
@@ -270,6 +264,8 @@ async fn scan_ptrace_attachment(findings: &mut Vec<Finding>) {
                                 .with_fix(format!("Investigate tracer: ls -la /proc/{}/exe && kill {} if unauthorized", tracer_pid, tracer_pid))
                                 .with_cvss(6.5)
                                 .with_mitre(vec!["T1055.008", "T1003"])
+                                .with_stig("V-230269")
+                                .with_nist(vec!["AC-3", "SI-4"])
                                 .with_engine("Phantom")
                                 .with_rule("DK-PHA-005"),
                         );
@@ -281,6 +277,7 @@ async fn scan_ptrace_attachment(findings: &mut Vec<Finding>) {
 }
 
 /// Detect memfd_create abuse (fileless malware)
+/// ATT&CK T1620 (Reflective Code Loading)
 async fn scan_memfd_abuse(findings: &mut Vec<Finding>) {
     let proc_dir = match std::fs::read_dir("/proc") {
         Ok(d) => d,
@@ -291,7 +288,6 @@ async fn scan_memfd_abuse(findings: &mut Vec<Finding>) {
         let name = entry.file_name().to_string_lossy().to_string();
         if !name.chars().all(|c| c.is_ascii_digit()) { continue; }
 
-        // Check for memfd file descriptors
         let fd_dir = format!("/proc/{}/fd", name);
         if let Ok(fds) = std::fs::read_dir(&fd_dir) {
             for fd_entry in fds.flatten() {
@@ -302,8 +298,6 @@ async fn scan_memfd_abuse(findings: &mut Vec<Finding>) {
                             .map(|p| p.to_string_lossy().to_string())
                             .unwrap_or_else(|_| "unknown".into());
 
-                        // Some legitimate uses exist (JIT compilers, etc.)
-                        // Flag if the executable itself is also anonymous
                         if exe.contains("memfd:") || exe.contains("(deleted)") {
                             findings.push(
                                 Finding::critical(format!("Fileless malware indicator — PID {} executing from memfd", name))
@@ -311,6 +305,7 @@ async fn scan_memfd_abuse(findings: &mut Vec<Finding>) {
                                     .with_fix(format!("Dump process memory for forensics: cp /proc/{}/exe /tmp/suspicious_binary && kill -9 {}", name, name))
                                     .with_cvss(9.1)
                                     .with_mitre(vec!["T1620", "T1055.009"])
+                                    .with_nist(vec!["SI-7", "SI-3", "IR-4"])
                                     .with_engine("Phantom")
                                     .with_rule("DK-PHA-006"),
                             );
@@ -322,7 +317,8 @@ async fn scan_memfd_abuse(findings: &mut Vec<Finding>) {
     }
 }
 
-/// Audit all crontab entries for suspicious patterns
+/// Audit all crontab entries for backdoors
+/// ATT&CK T1053.003 (Scheduled Task: Cron), DISA STIG V-230324
 async fn scan_crontab_backdoors(findings: &mut Vec<Finding>) {
     let cron_dirs = vec![
         "/etc/cron.d",
@@ -334,7 +330,6 @@ async fn scan_crontab_backdoors(findings: &mut Vec<Finding>) {
         "/var/spool/cron/crontabs",
     ];
 
-    // Check system crontab
     for file in &["/etc/crontab"] {
         check_cron_file(file, findings);
     }
@@ -351,7 +346,6 @@ async fn scan_crontab_backdoors(findings: &mut Vec<Finding>) {
         }
     }
 
-    // Check at jobs
     if Path::new("/var/spool/at").is_dir() {
         if let Ok(entries) = std::fs::read_dir("/var/spool/at") {
             let at_jobs: Vec<_> = entries.flatten().collect();
@@ -360,6 +354,8 @@ async fn scan_crontab_backdoors(findings: &mut Vec<Finding>) {
                     Finding::info(format!("{} pending 'at' jobs found", at_jobs.len()))
                         .with_detail("at jobs execute once at a specified time — review for unauthorized scheduled tasks")
                         .with_fix("List jobs: atq && inspect: at -c <job_id>")
+                        .with_mitre(vec!["T1053.002"])
+                        .with_nist(vec!["CM-7"])
                         .with_engine("Phantom")
                         .with_rule("DK-PHA-007"),
                 );
@@ -386,35 +382,34 @@ fn check_cron_file(path: &str, findings: &mut Vec<Finding>) {
                         .with_fix(format!("Review and remove if unauthorized: edit {} line {}", path, line_num + 1))
                         .with_cvss(7.8)
                         .with_mitre(vec!["T1053.003", "T1059.004"])
+                        .with_stig("V-230324")
+                        .with_nist(vec!["CM-7", "AU-2"])
                         .with_engine("Phantom")
                         .with_rule("DK-PHA-008"),
                 );
-                break; // One finding per line
+                break;
             }
         }
     }
 }
 
 /// Detect unusual outbound connections to non-standard ports
+/// ATT&CK T1071.001 (Web Protocols), T1041 (Exfiltration Over C2)
 async fn scan_outbound_connections(findings: &mut Vec<Finding>) {
-    // Parse /proc/net/tcp for ESTABLISHED connections
     let tcp_data = match std::fs::read_to_string("/proc/net/tcp") {
         Ok(d) => d,
         Err(_) => return,
     };
 
-    let mut suspicious_conns: Vec<(String, u16, String)> = Vec::new(); // (remote_ip, remote_port, pid)
+    let mut suspicious_conns: Vec<(String, u16, String)> = Vec::new();
 
-    // Also parse /proc/net/tcp6
     let tcp6_data = std::fs::read_to_string("/proc/net/tcp6").unwrap_or_default();
     let all_data = format!("{}\n{}", tcp_data, tcp6_data);
 
     for line in all_data.lines().skip(1) {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 4 { continue; }
-
-        // State 01 = ESTABLISHED
-        if fields[3] != "01" { continue; }
+        if fields[3] != "01" { continue; } // ESTABLISHED
 
         let remote = fields[2];
         let parts: Vec<&str> = remote.split(':').collect();
@@ -425,10 +420,8 @@ async fn scan_outbound_connections(findings: &mut Vec<Finding>) {
             Err(_) => continue,
         };
 
-        // Parse remote IP (handle IPv4 in hex)
         let ip_hex = parts[0];
         let remote_ip = if ip_hex.len() == 8 {
-            // IPv4
             let bytes: Vec<u8> = (0..4)
                 .filter_map(|i| u8::from_str_radix(&ip_hex[i*2..i*2+2], 16).ok())
                 .collect();
@@ -438,30 +431,26 @@ async fn scan_outbound_connections(findings: &mut Vec<Finding>) {
                 continue;
             }
         } else {
-            continue; // Skip IPv6 for now — less surface area
+            continue;
         };
 
-        // Skip local/private IPs
-        if remote_ip.starts_with("127.") || remote_ip.starts_with("10.") 
-            || remote_ip.starts_with("192.168.") || remote_ip.starts_with("172.") 
+        if remote_ip.starts_with("127.") || remote_ip.starts_with("10.")
+            || remote_ip.starts_with("192.168.") || remote_ip.starts_with("172.")
             || remote_ip == "0.0.0.0" {
             continue;
         }
 
-        // Flag suspicious ports (not standard web/mail/dns)
         let standard_ports: HashSet<u16> = [
-            22, 25, 53, 80, 110, 143, 443, 465, 587, 993, 995, 
-            8080, 8443, 3306, 5432, 6379, 27017, // Common services
+            22, 25, 53, 80, 110, 143, 443, 465, 587, 993, 995,
+            8080, 8443, 3306, 5432, 6379, 27017,
         ].into_iter().collect();
 
         if !standard_ports.contains(&port) {
-            // Get PID from inode if available
             let pid = if fields.len() >= 10 { fields[9].to_string() } else { "?".into() };
             suspicious_conns.push((remote_ip.clone(), port, pid));
         }
     }
 
-    // Limit output to avoid flooding
     let shown = suspicious_conns.len().min(10);
     for (ip, port, _pid) in suspicious_conns.iter().take(shown) {
         findings.push(
@@ -470,6 +459,7 @@ async fn scan_outbound_connections(findings: &mut Vec<Finding>) {
                 .with_fix(format!("Investigate: ss -tnp | grep {} && block if unauthorized: iptables -A OUTPUT -d {} -j DROP", port, ip))
                 .with_cvss(5.3)
                 .with_mitre(vec!["T1071.001", "T1041", "T1572"])
+                .with_nist(vec!["SC-7", "SI-4", "AC-17"])
                 .with_engine("Phantom")
                 .with_rule("DK-PHA-009"),
         );
@@ -484,7 +474,8 @@ async fn scan_outbound_connections(findings: &mut Vec<Finding>) {
     }
 }
 
-/// Detect process name masquerading (e.g., kworker mimics)
+/// Detect process name masquerading (kworker mimics, bracket tricks)
+/// ATT&CK T1036.004 (Masquerade Task or Service)
 async fn scan_process_masquerading(findings: &mut Vec<Finding>) {
     let proc_dir = match std::fs::read_dir("/proc") {
         Ok(d) => d,
@@ -497,45 +488,38 @@ async fn scan_process_masquerading(findings: &mut Vec<Finding>) {
 
         let status_path = format!("/proc/{}/status", name);
         let comm_path = format!("/proc/{}/comm", name);
-        
+
         let comm = match std::fs::read_to_string(&comm_path) {
             Ok(c) => c.trim().to_string(),
             Err(_) => continue,
         };
 
-        // Check for kernel thread masquerading
-        // Real kernel threads have exe pointing to nothing (ENOENT)
-        // Fake ones have a real exe link
         let kernel_thread_names = ["kworker", "kthreadd", "ksoftirqd", "migration", "watchdog", "rcu_"];
         let looks_like_kernel = kernel_thread_names.iter().any(|k| comm.starts_with(k));
 
         if looks_like_kernel {
-            // Real kernel threads have no exe
             match std::fs::read_link(format!("/proc/{}/exe", name)) {
                 Ok(exe) => {
-                    // Has a real exe — this is a userspace process pretending to be a kernel thread
                     findings.push(
                         Finding::critical(format!("Process masquerading as kernel thread: '{}' (PID {})", comm, name))
                             .with_detail(format!("Real executable: {} — legitimate kernel threads have no exe link", exe.display()))
                             .with_fix(format!("Kill immediately: kill -9 {} && investigate binary: file {}", name, exe.display()))
                             .with_cvss(8.8)
                             .with_mitre(vec!["T1036.004", "T1014"])
+                            .with_nist(vec!["SI-4", "SI-7"])
                             .with_engine("Phantom")
                             .with_rule("DK-PHA-010"),
                     );
                 }
-                Err(_) => {} // Normal kernel thread — no exe link
+                Err(_) => {}
             }
         }
 
-        // Check for square-bracket name mimicry (e.g., [kworker/0:1] but from userspace)
         if comm.starts_with('[') && comm.ends_with(']') {
             if let Ok(_exe) = std::fs::read_link(format!("/proc/{}/exe", name)) {
-                // Real kernel threads in brackets shouldn't have exe links
                 if let Ok(status) = std::fs::read_to_string(&status_path) {
-                    // Check if it has threads (Threads: > 0 but checking actual user threads)
                     let is_userspace = status.lines()
-                        .any(|l| l.starts_with("Uid:") && !l.contains("0\t0\t0\t0")); // Not all zeros = not kernel
+                        .any(|l| l.starts_with("Uid:") && !l.contains("0\t0\t0\t0"));
 
                     if is_userspace {
                         findings.push(
@@ -544,6 +528,7 @@ async fn scan_process_masquerading(findings: &mut Vec<Finding>) {
                                 .with_fix(format!("Investigate: cat /proc/{}/cmdline | tr '\\0' ' '", name))
                                 .with_cvss(7.5)
                                 .with_mitre(vec!["T1036.004"])
+                                .with_nist(vec!["SI-4"])
                                 .with_engine("Phantom")
                                 .with_rule("DK-PHA-011"),
                         );
@@ -555,6 +540,7 @@ async fn scan_process_masquerading(findings: &mut Vec<Finding>) {
 }
 
 /// Detect hidden files in world-writable directories
+/// ATT&CK T1564.001 (Hidden Files and Directories)
 async fn scan_hidden_artifacts(findings: &mut Vec<Finding>) {
     let suspicious_dirs = vec![
         "/tmp", "/var/tmp", "/dev/shm", "/run/shm",
@@ -562,12 +548,11 @@ async fn scan_hidden_artifacts(findings: &mut Vec<Finding>) {
 
     for dir in &suspicious_dirs {
         if !Path::new(dir).is_dir() { continue; }
-        
+
         if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
-                
-                // Hidden files in world-writable directories
+
                 if name.starts_with('.') && name != "." && name != ".." {
                     let path = entry.path();
                     let is_dir = path.is_dir();
@@ -575,7 +560,6 @@ async fn scan_hidden_artifacts(findings: &mut Vec<Finding>) {
                         path.metadata().map(|m| m.len()).unwrap_or(0)
                     } else { 0 };
 
-                    // Skip small/zero files and common legitimate hidden files
                     if name == ".X11-unix" || name == ".ICE-unix" || name == ".font-unix" || name == ".XIM-unix" {
                         continue;
                     }
@@ -593,12 +577,12 @@ async fn scan_hidden_artifacts(findings: &mut Vec<Finding>) {
                             .with_fix(format!("Inspect: ls -la {}/{} && file {}/{}", dir, name, dir, name))
                             .with_cvss(4.3)
                             .with_mitre(vec!["T1564.001"])
+                            .with_nist(vec!["CM-6", "SI-4"])
                             .with_engine("Phantom")
                             .with_rule("DK-PHA-012"),
                     );
                 }
 
-                // Executable files in world-writable dirs
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;
@@ -607,13 +591,13 @@ async fn scan_hidden_artifacts(findings: &mut Vec<Finding>) {
                         if let Ok(meta) = path.metadata() {
                             let mode = meta.permissions().mode();
                             if mode & 0o111 != 0 && meta.len() > 0 {
-                                // It's executable and non-empty
                                 findings.push(
                                     Finding::warning(format!("Executable in {}: {}", dir, name))
                                         .with_detail(format!("Size: {} bytes | Permissions: {:o}", meta.len(), mode & 0o7777))
                                         .with_fix(format!("Inspect: file {}/{} && strings {}/{} | head", dir, name, dir, name))
                                         .with_cvss(4.3)
                                         .with_mitre(vec!["T1059", "T1036.005"])
+                                        .with_nist(vec!["CM-6", "SI-3"])
                                         .with_engine("Phantom")
                                         .with_rule("DK-PHA-013"),
                                 );
@@ -627,8 +611,8 @@ async fn scan_hidden_artifacts(findings: &mut Vec<Finding>) {
 }
 
 /// Check for namespace manipulation indicators
+/// ATT&CK T1611 (Escape to Host), NIST SC-39
 async fn scan_namespace_anomalies(findings: &mut Vec<Finding>) {
-    // Check if user namespaces are available (required for some container escapes)
     if let Ok(content) = std::fs::read_to_string("/proc/sys/user/max_user_namespaces") {
         let max_ns: u64 = content.trim().parse().unwrap_or(0);
         if max_ns > 0 {
@@ -637,13 +621,14 @@ async fn scan_namespace_anomalies(findings: &mut Vec<Finding>) {
                     .with_detail("User namespaces allow unprivileged namespace creation — used by containers but also exploitable")
                     .with_fix("If not needed: echo 0 > /proc/sys/user/max_user_namespaces")
                     .with_cis("1.6.4")
+                    .with_stig("V-230267")
+                    .with_nist(vec!["CM-6", "SC-39"])
                     .with_engine("Phantom")
                     .with_rule("DK-PHA-014"),
             );
         }
     }
 
-    // Check for unshare capability (unprivileged namespace creation)
     if let Ok(content) = std::fs::read_to_string("/proc/sys/kernel/unprivileged_userns_clone") {
         if content.trim() == "1" {
             findings.push(
@@ -652,6 +637,7 @@ async fn scan_namespace_anomalies(findings: &mut Vec<Finding>) {
                     .with_fix("If not needed: sysctl kernel.unprivileged_userns_clone=0")
                     .with_cvss(5.3)
                     .with_cve(vec!["CVE-2022-0185", "CVE-2023-2640"])
+                    .with_nist(vec!["CM-6", "SC-39"])
                     .with_engine("Phantom")
                     .with_rule("DK-PHA-015"),
             );

@@ -145,6 +145,14 @@ impl Reporter {
                         if let Some(cis) = &finding.cis_id {
                             eprintln!("      {} CIS {}", "Benchmark:".blue(), cis);
                         }
+                        // Show DISA STIG ID
+                        if let Some(stig) = &finding.stig {
+                            eprintln!("      {} {}", "STIG:".blue(), stig);
+                        }
+                        // Show NIST SP 800-53 controls
+                        if let Some(nist) = &finding.nist {
+                            eprintln!("      {} {}", "NIST:".blue(), nist.join(", "));
+                        }
                         // Show CVEs
                         if let Some(cves) = &finding.cve {
                             eprintln!("      {} {}", "CVE:".red(), cves.join(", "));
@@ -272,6 +280,12 @@ impl Reporter {
                 }
                 if let Some(cves) = &finding.cve {
                     props.insert("cve".into(), json!(cves));
+                }
+                if let Some(stig) = &finding.stig {
+                    props.insert("disa-stig".into(), json!(stig));
+                }
+                if let Some(nist) = &finding.nist {
+                    props.insert("nist-800-53".into(), json!(nist));
                 }
                 if let Some(cvss) = finding.cvss {
                     props.insert("cvss".into(), json!(cvss));

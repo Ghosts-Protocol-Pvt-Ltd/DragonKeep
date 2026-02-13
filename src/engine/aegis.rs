@@ -3,6 +3,9 @@
 //! Verifies binary provenance, detects package manager misconfigurations,
 //! finds stale/EOL packages, audits container escape vectors,
 //! checks systemd unit integrity, and scans for unsigned kernel modules.
+//!
+//! Standards: MITRE ATT&CK (T1195.002, T1554, T1547.006, T1543.002),
+//! NIST SP 800-53 Rev 5 (SI-7, SA-12, SI-2, CM-7), DISA STIG RHEL-08
 
 use crate::config::Config;
 use crate::engine::Finding;
@@ -45,28 +48,13 @@ pub async fn scan(config: &Config) -> anyhow::Result<Vec<Finding>> {
 
     let mut findings = Vec::new();
 
-    // 1. Check package manager integrity settings
     audit_package_manager(&mut findings).await;
-
-    // 2. Verify critical binary integrity
     verify_binary_provenance(&mut findings).await;
-
-    // 3. Check for EOL distro / stale kernel
     check_system_currency(&mut findings).await;
-
-    // 4. Audit container escape vectors
     audit_container_security(&mut findings).await;
-
-    // 5. Check systemd unit file integrity
     audit_systemd_units(&mut findings).await;
-
-    // 6. Check for unsigned kernel modules
     audit_kernel_modules(&mut findings).await;
-
-    // 7. Audit pip/npm global installs
     audit_language_packages(&mut findings).await;
-
-    // 8. Check for repo key expiration
     audit_repo_keys(&mut findings).await;
 
     if findings.is_empty() {
@@ -81,6 +69,8 @@ pub async fn scan(config: &Config) -> anyhow::Result<Vec<Finding>> {
 }
 
 /// Check package manager configurations for security
+/// ATT&CK T1195.002 (Compromise Software Supply Chain)
+/// DISA STIG V-230264, NIST SI-7
 async fn audit_package_manager(findings: &mut Vec<Finding>) {
     // DNF/YUM (RHEL/Fedora)
     if Path::new("/etc/dnf/dnf.conf").exists() {
@@ -93,6 +83,8 @@ async fn audit_package_manager(findings: &mut Vec<Finding>) {
                         .with_cvss(9.1)
                         .with_cis("1.2.3")
                         .with_mitre(vec!["T1195.002"])
+                        .with_stig("V-230264")
+                        .with_nist(vec!["SI-7", "CM-11(2)"])
                         .with_engine("Aegis")
                         .with_rule("DK-AEG-001"),
                 );
@@ -105,6 +97,8 @@ async fn audit_package_manager(findings: &mut Vec<Finding>) {
                         .with_cvss(6.8)
                         .with_cis("1.2.4")
                         .with_mitre(vec!["T1195.002"])
+                        .with_stig("V-230264")
+                        .with_nist(vec!["SI-7"])
                         .with_engine("Aegis")
                         .with_rule("DK-AEG-002"),
                 );
@@ -114,12 +108,11 @@ async fn audit_package_manager(findings: &mut Vec<Finding>) {
 
     // APT (Debian/Ubuntu)
     if Path::new("/etc/apt").is_dir() {
-        // Check for allow-unauthenticated
         let apt_configs = glob::glob("/etc/apt/apt.conf.d/*").ok();
         if let Some(paths) = apt_configs {
             for path in paths.flatten() {
                 if let Ok(content) = std::fs::read_to_string(&path) {
-                    if content.to_lowercase().contains("allow-unauthenticated") 
+                    if content.to_lowercase().contains("allow-unauthenticated")
                         || content.to_lowercase().contains("allow-insecure-repositories")
                     {
                         findings.push(
@@ -129,6 +122,7 @@ async fn audit_package_manager(findings: &mut Vec<Finding>) {
                                 .with_cvss(9.1)
                                 .with_cis("1.2.1")
                                 .with_mitre(vec!["T1195.002", "T1557"])
+                                .with_nist(vec!["SI-7", "SA-12"])
                                 .with_engine("Aegis")
                                 .with_rule("DK-AEG-003"),
                         );
@@ -137,7 +131,6 @@ async fn audit_package_manager(findings: &mut Vec<Finding>) {
             }
         }
 
-        // Check for HTTP (non-HTTPS) repos
         if let Ok(content) = std::fs::read_to_string("/etc/apt/sources.list") {
             for line in content.lines() {
                 let trimmed = line.trim();
@@ -148,10 +141,11 @@ async fn audit_package_manager(findings: &mut Vec<Finding>) {
                             .with_fix("Change http:// to https:// in /etc/apt/sources.list")
                             .with_cvss(5.9)
                             .with_mitre(vec!["T1557", "T1195.002"])
+                            .with_nist(vec!["SC-8", "SC-23"])
                             .with_engine("Aegis")
                             .with_rule("DK-AEG-004"),
                     );
-                    break; // One finding is enough
+                    break;
                 }
             }
         }
@@ -166,6 +160,7 @@ async fn audit_package_manager(findings: &mut Vec<Finding>) {
                     .with_fix("Set SigLevel = Required DatabaseOptional in /etc/pacman.conf")
                     .with_cvss(9.1)
                     .with_mitre(vec!["T1195.002"])
+                    .with_nist(vec!["SI-7"])
                     .with_engine("Aegis")
                     .with_rule("DK-AEG-005"),
             );
@@ -174,6 +169,7 @@ async fn audit_package_manager(findings: &mut Vec<Finding>) {
 }
 
 /// Verify critical binaries haven't been tampered with
+/// ATT&CK T1554 (Compromise Client Software Binary), DISA STIG V-230221
 async fn verify_binary_provenance(findings: &mut Vec<Finding>) {
     for (bin_path, _pkg_name) in CRITICAL_BINARIES {
         if !Path::new(bin_path).exists() { continue; }
@@ -183,7 +179,6 @@ async fn verify_binary_provenance(findings: &mut Vec<Finding>) {
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 if !stdout.trim().is_empty() {
-                    // RPM -V outputs changes: S=size, M=mode, 5=md5, T=mtime, etc.
                     let changes = stdout.trim();
                     if changes.contains('5') || changes.contains('S') {
                         findings.push(
@@ -192,6 +187,8 @@ async fn verify_binary_provenance(findings: &mut Vec<Finding>) {
                                 .with_fix(format!("Reinstall the package or investigate the binary: rpm -qf {} && rpm --restore $(rpm -qf {})", bin_path, bin_path))
                                 .with_cvss(9.8)
                                 .with_mitre(vec!["T1554", "T1036.005"])
+                                .with_stig("V-230221")
+                                .with_nist(vec!["SI-7", "SI-7(1)"])
                                 .with_engine("Aegis")
                                 .with_rule("DK-AEG-006"),
                         );
@@ -213,6 +210,7 @@ async fn verify_binary_provenance(findings: &mut Vec<Finding>) {
                                 .with_fix(format!("Reinstall: apt-get install --reinstall $(dpkg -S {} | cut -d: -f1)", bin_path))
                                 .with_cvss(9.8)
                                 .with_mitre(vec!["T1554", "T1036.005"])
+                                .with_nist(vec!["SI-7", "SI-7(1)"])
                                 .with_engine("Aegis")
                                 .with_rule("DK-AEG-007"),
                         );
@@ -224,8 +222,8 @@ async fn verify_binary_provenance(findings: &mut Vec<Finding>) {
 }
 
 /// Check for EOL distro, stale kernel, and system age
+/// ATT&CK T1190, T1210 — NIST SI-2
 async fn check_system_currency(findings: &mut Vec<Finding>) {
-    // Check distro EOL
     if let Ok(content) = std::fs::read_to_string("/etc/os-release") {
         let pretty_name = content.lines()
             .find(|l| l.starts_with("PRETTY_NAME="))
@@ -241,6 +239,7 @@ async fn check_system_currency(findings: &mut Vec<Finding>) {
                         .with_cvss(9.8)
                         .with_cis("1.8")
                         .with_mitre(vec!["T1190", "T1210"])
+                        .with_nist(vec!["SI-2", "SA-22"])
                         .with_engine("Aegis")
                         .with_rule("DK-AEG-008"),
                 );
@@ -248,11 +247,9 @@ async fn check_system_currency(findings: &mut Vec<Finding>) {
         }
     }
 
-    // Check kernel age
     if let Ok(output) = Command::new("uname").arg("-r").output() {
         let kernel = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        
-        // Check boot time to estimate kernel age
+
         if let Ok(uptime_str) = std::fs::read_to_string("/proc/uptime") {
             if let Some(uptime_secs) = uptime_str.split_whitespace().next() {
                 if let Ok(secs) = uptime_secs.parse::<f64>() {
@@ -264,6 +261,7 @@ async fn check_system_currency(findings: &mut Vec<Finding>) {
                                 .with_fix("Schedule a maintenance window to apply kernel updates and reboot")
                                 .with_cvss(5.3)
                                 .with_cis("1.9")
+                                .with_nist(vec!["SI-2", "CM-3"])
                                 .with_engine("Aegis")
                                 .with_rule("DK-AEG-009"),
                         );
@@ -273,7 +271,7 @@ async fn check_system_currency(findings: &mut Vec<Finding>) {
         }
     }
 
-    // Check for pending security updates (if available)
+    // Check for pending security updates
     if Path::new("/usr/bin/dnf").exists() {
         if let Ok(output) = Command::new("dnf")
             .args(["updateinfo", "list", "--security", "--available", "-q"])
@@ -290,6 +288,8 @@ async fn check_system_currency(findings: &mut Vec<Finding>) {
                             .with_cvss(7.5)
                             .with_cis("1.9")
                             .with_mitre(vec!["T1190", "T1210"])
+                            .with_stig("V-230270")
+                            .with_nist(vec!["SI-2", "SI-2(2)"])
                             .with_engine("Aegis")
                             .with_rule("DK-AEG-010"),
                     );
@@ -300,15 +300,14 @@ async fn check_system_currency(findings: &mut Vec<Finding>) {
 }
 
 /// Check for container escape vectors
+/// ATT&CK T1611 (Escape to Host), NIST SC-39
 async fn audit_container_security(findings: &mut Vec<Finding>) {
-    // Check if running inside a container
     let in_container = Path::new("/.dockerenv").exists()
         || std::fs::read_to_string("/proc/1/cgroup")
             .map(|c| c.contains("docker") || c.contains("lxc") || c.contains("kubepods"))
             .unwrap_or(false);
 
     if in_container {
-        // Check for privileged mode
         if let Ok(status) = std::fs::read_to_string("/proc/1/status") {
             if status.lines().any(|l| l.starts_with("CapEff:") && l.contains("0000003fffffffff")) {
                 findings.push(
@@ -317,13 +316,13 @@ async fn audit_container_security(findings: &mut Vec<Finding>) {
                         .with_fix("Remove --privileged flag and use specific --cap-add flags instead")
                         .with_cvss(9.9)
                         .with_mitre(vec!["T1611", "T1610"])
+                        .with_nist(vec!["SC-39", "AC-6"])
                         .with_engine("Aegis")
                         .with_rule("DK-AEG-011"),
                 );
             }
         }
 
-        // Check for mounted Docker socket
         if Path::new("/var/run/docker.sock").exists() {
             findings.push(
                 Finding::critical("Docker socket mounted inside container")
@@ -331,23 +330,22 @@ async fn audit_container_security(findings: &mut Vec<Finding>) {
                     .with_fix("Remove -v /var/run/docker.sock mount and use Docker-in-Docker or rootless Docker instead")
                     .with_cvss(9.9)
                     .with_mitre(vec!["T1611"])
+                    .with_nist(vec!["SC-39", "AC-6"])
                     .with_engine("Aegis")
                     .with_rule("DK-AEG-012"),
             );
         }
 
-        // Check for host PID namespace
         if let Ok(ns_pid) = std::fs::read_link("/proc/1/ns/pid") {
             if let Ok(self_ns) = std::fs::read_link("/proc/self/ns/pid") {
-                if ns_pid != self_ns {
-                    // Container has its own PID namespace — this is normal and good
-                } else {
+                if ns_pid == self_ns {
                     findings.push(
                         Finding::high("Container shares host PID namespace")
                             .with_detail("--pid=host enables visibility of all host processes and ptrace-based attacks")
                             .with_fix("Remove --pid=host from container run configuration")
                             .with_cvss(7.8)
                             .with_mitre(vec!["T1611", "T1057"])
+                            .with_nist(vec!["SC-39", "SC-4"])
                             .with_engine("Aegis")
                             .with_rule("DK-AEG-013"),
                     );
@@ -356,7 +354,6 @@ async fn audit_container_security(findings: &mut Vec<Finding>) {
         }
     }
 
-    // Check for exposed container registries without auth
     if let Ok(content) = std::fs::read_to_string("/etc/containers/registries.conf") {
         if content.contains("insecure = true") || content.contains("[registries.insecure]") {
             findings.push(
@@ -365,6 +362,7 @@ async fn audit_container_security(findings: &mut Vec<Finding>) {
                     .with_fix("Use HTTPS registries and remove insecure registry entries")
                     .with_cvss(6.8)
                     .with_mitre(vec!["T1195.002", "T1557"])
+                    .with_nist(vec!["SC-8", "SI-7"])
                     .with_engine("Aegis")
                     .with_rule("DK-AEG-014"),
             );
@@ -373,8 +371,9 @@ async fn audit_container_security(findings: &mut Vec<Finding>) {
 }
 
 /// Check systemd unit files for tampering
+/// ATT&CK T1543.002 (Create or Modify System Process: Systemd Service)
+/// DISA STIG V-230312
 async fn audit_systemd_units(findings: &mut Vec<Finding>) {
-    // Check for override files in user-writable locations
     let suspicious_dirs = vec![
         "/etc/systemd/system",
         "/run/systemd/system",
@@ -390,20 +389,18 @@ async fn audit_systemd_units(findings: &mut Vec<Finding>) {
         for entry in entries.flatten() {
             let path = entry.path();
             if !path.is_file() { continue; }
-            
+
             let name = path.file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_default();
-            
+
             if !name.ends_with(".service") { continue; }
 
             if let Ok(content) = std::fs::read_to_string(&path) {
-                // Check for suspicious ExecStart patterns
                 for line in content.lines() {
                     let trimmed = line.trim();
                     if trimmed.starts_with("ExecStart=") || trimmed.starts_with("ExecStartPre=") || trimmed.starts_with("ExecStartPost=") {
                         let exec = trimmed.split('=').nth(1).unwrap_or("");
-                        // Flag services running from tmp or home directories
                         if exec.starts_with("/tmp/") || exec.starts_with("/var/tmp/") || exec.contains("/dev/shm/") {
                             findings.push(
                                 Finding::critical(format!("Suspicious systemd service: {} executes from temp directory", name))
@@ -411,12 +408,13 @@ async fn audit_systemd_units(findings: &mut Vec<Finding>) {
                                     .with_fix(format!("Investigate and remove if unauthorized: systemctl disable {} && rm {}", name, path.display()))
                                     .with_cvss(8.8)
                                     .with_mitre(vec!["T1543.002", "T1036.005"])
+                                    .with_stig("V-230312")
+                                    .with_nist(vec!["CM-7", "SI-7"])
                                     .with_engine("Aegis")
                                     .with_rule("DK-AEG-015"),
                             );
                         }
 
-                        // Flag services with shell command execution
                         if exec.contains("bash -c") || exec.contains("sh -c") || exec.contains("curl ") || exec.contains("wget ") {
                             findings.push(
                                 Finding::warning(format!("Systemd service '{}' uses shell commands in ExecStart", name))
@@ -424,6 +422,7 @@ async fn audit_systemd_units(findings: &mut Vec<Finding>) {
                                     .with_fix("Use direct binary paths instead of shell commands in systemd units")
                                     .with_cvss(5.3)
                                     .with_mitre(vec!["T1543.002", "T1059.004"])
+                                    .with_nist(vec!["CM-7"])
                                     .with_engine("Aegis")
                                     .with_rule("DK-AEG-016"),
                             );
@@ -436,25 +435,24 @@ async fn audit_systemd_units(findings: &mut Vec<Finding>) {
 }
 
 /// Check for unsigned or out-of-tree kernel modules
+/// ATT&CK T1547.006 (Kernel Modules and Extensions), DISA STIG V-230268
 async fn audit_kernel_modules(findings: &mut Vec<Finding>) {
     if let Ok(output) = Command::new("lsmod").output() {
         if !output.status.success() { return; }
         let stdout = String::from_utf8_lossy(&output.stdout);
-        
+
         for line in stdout.lines().skip(1) {
             let module_name = match line.split_whitespace().next() {
                 Some(n) => n,
                 None => continue,
             };
 
-            // Check module signing status via modinfo
             if let Ok(modinfo) = Command::new("modinfo").arg(module_name).output() {
                 let info = String::from_utf8_lossy(&modinfo.stdout);
-                
-                // Check for unsigned modules
+
                 let has_sig = info.lines().any(|l| l.starts_with("sig_id:") || l.starts_with("signer:"));
                 let is_intree = info.lines().any(|l| l.starts_with("intree:") && l.contains("Y"));
-                
+
                 if !has_sig && !is_intree {
                     findings.push(
                         Finding::warning(format!("Out-of-tree unsigned kernel module: {}", module_name))
@@ -462,6 +460,8 @@ async fn audit_kernel_modules(findings: &mut Vec<Finding>) {
                             .with_fix(format!("Investigate module origin: modinfo {} && consider removing with: modprobe -r {}", module_name, module_name))
                             .with_cvss(6.7)
                             .with_mitre(vec!["T1547.006", "T1014"])
+                            .with_stig("V-230268")
+                            .with_nist(vec!["SI-7", "CM-7"])
                             .with_engine("Aegis")
                             .with_rule("DK-AEG-017"),
                     );
@@ -470,7 +470,6 @@ async fn audit_kernel_modules(findings: &mut Vec<Finding>) {
         }
     }
 
-    // Check for module loading restrictions
     if let Ok(content) = std::fs::read_to_string("/proc/sys/kernel/modules_disabled") {
         if content.trim() == "0" {
             findings.push(
@@ -478,6 +477,7 @@ async fn audit_kernel_modules(findings: &mut Vec<Finding>) {
                     .with_detail("New kernel modules can be loaded at runtime (modules_disabled=0)")
                     .with_fix("After system is fully booted: echo 1 > /proc/sys/kernel/modules_disabled (irreversible until reboot)")
                     .with_cis("1.4.2")
+                    .with_nist(vec!["CM-6", "CM-7"])
                     .with_engine("Aegis")
                     .with_rule("DK-AEG-018"),
             );
@@ -486,13 +486,12 @@ async fn audit_kernel_modules(findings: &mut Vec<Finding>) {
 }
 
 /// Audit globally installed language packages (pip, npm)
+/// ATT&CK T1195.002, NIST SA-12
 async fn audit_language_packages(findings: &mut Vec<Finding>) {
-    // Check for pip packages installed as root
     if let Ok(output) = Command::new("pip3")
         .args(["list", "--format=json", "--path=/usr/lib/python3/dist-packages"])
         .output()
     {
-        // Just check if pip is running with system-level packages
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             if let Ok(packages) = serde_json::from_str::<Vec<serde_json::Value>>(&stdout) {
@@ -503,6 +502,7 @@ async fn audit_language_packages(findings: &mut Vec<Finding>) {
                             .with_fix("Use virtual environments (python -m venv) instead of system-wide pip install")
                             .with_cvss(3.7)
                             .with_mitre(vec!["T1195.002"])
+                            .with_nist(vec!["SA-12", "CM-7"])
                             .with_engine("Aegis")
                             .with_rule("DK-AEG-019"),
                     );
@@ -511,7 +511,6 @@ async fn audit_language_packages(findings: &mut Vec<Finding>) {
         }
     }
 
-    // Check for npm global packages
     if let Ok(output) = Command::new("npm").args(["list", "-g", "--json", "--depth=0"]).output() {
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -524,6 +523,7 @@ async fn audit_language_packages(findings: &mut Vec<Finding>) {
                                 .with_fix("Use npx for one-off tools and local installs for project dependencies")
                                 .with_cvss(3.7)
                                 .with_mitre(vec!["T1195.002"])
+                                .with_nist(vec!["SA-12", "CM-7"])
                                 .with_engine("Aegis")
                                 .with_rule("DK-AEG-020"),
                         );
@@ -536,7 +536,6 @@ async fn audit_language_packages(findings: &mut Vec<Finding>) {
 
 /// Check for expired or soon-to-expire repo signing keys
 async fn audit_repo_keys(findings: &mut Vec<Finding>) {
-    // RPM-based: check GPG keys
     if let Ok(output) = Command::new("rpm").args(["-qa", "gpg-pubkey*"]).output() {
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -548,6 +547,7 @@ async fn audit_repo_keys(findings: &mut Vec<Finding>) {
                         .with_fix("Import distribution GPG keys: rpm --import /etc/pki/rpm-gpg/RPM-GPG-KEY-*")
                         .with_cvss(6.5)
                         .with_mitre(vec!["T1195.002"])
+                        .with_nist(vec!["SI-7"])
                         .with_engine("Aegis")
                         .with_rule("DK-AEG-021"),
                 );
@@ -555,18 +555,18 @@ async fn audit_repo_keys(findings: &mut Vec<Finding>) {
         }
     }
 
-    // APT-based: check for expired keys
     if Path::new("/usr/bin/apt-key").exists() {
         if let Ok(output) = Command::new("apt-key").args(["list", "--with-colons"]).output() {
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
-                if stdout.contains(":e:") { // 'e' = expired
+                if stdout.contains(":e:") {
                     findings.push(
                         Finding::warning("Expired APT signing keys detected")
                             .with_detail("Expired keys may prevent security updates from being verified")
                             .with_fix("Update expired keys: apt-key adv --refresh-keys --keyserver keyserver.ubuntu.com")
                             .with_cvss(5.3)
                             .with_mitre(vec!["T1195.002"])
+                            .with_nist(vec!["SI-7"])
                             .with_engine("Aegis")
                             .with_rule("DK-AEG-022"),
                     );

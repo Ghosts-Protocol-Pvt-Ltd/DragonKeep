@@ -1,8 +1,11 @@
 //! Spectre Engine — AI/ML Threat Surface Scanner
 //!
-//! Detects exposed ML models, unprotected inference endpoints,
+//! Detects exposed ML model endpoints, unprotected inference services,
 //! prompt injection vectors, GPU memory residuals, unsafe deserialization,
 //! leaked API keys, and AI framework vulnerabilities.
+//!
+//! Standards: MITRE ATT&CK (T1190, T1059.006, T1195.002, T1552.001),
+//! NIST SP 800-53 Rev 5 (SC-7, SI-7, IA-5, SC-28), OWASP ML Top 10
 
 use crate::config::Config;
 use crate::engine::Finding;
@@ -87,28 +90,13 @@ pub async fn scan(config: &Config) -> anyhow::Result<Vec<Finding>> {
 
     let mut findings = Vec::new();
 
-    // 1. Scan for exposed AI inference ports
     scan_ai_ports(&mut findings).await;
-
-    // 2. Scan for world-readable model files
     scan_model_files(&mut findings).await;
-
-    // 3. Check for leaked API keys / tokens
     scan_api_keys(&mut findings).await;
-
-    // 4. Check GPU memory state
     scan_gpu_memory(&mut findings).await;
-
-    // 5. Scan for unsafe deserialization in Python files
     scan_unsafe_deserialization(&mut findings).await;
-
-    // 6. Check for exposed Jupyter configs
     scan_jupyter_config(&mut findings).await;
-
-    // 7. Check for container-exposed model serving
     scan_container_ai_exposure(&mut findings).await;
-
-    // 8. Scan for prompt injection vectors
     scan_prompt_injection_vectors(&mut findings).await;
 
     if findings.is_empty() {
@@ -123,6 +111,7 @@ pub async fn scan(config: &Config) -> anyhow::Result<Vec<Finding>> {
 }
 
 /// Check if common AI inference ports are listening and externally accessible
+/// ATT&CK T1190 (Exploit Public-Facing Application)
 async fn scan_ai_ports(findings: &mut Vec<Finding>) {
     let tcp_data = match std::fs::read_to_string("/proc/net/tcp") {
         Ok(data) => data,
@@ -135,7 +124,6 @@ async fn scan_ai_ports(findings: &mut Vec<Finding>) {
         .filter_map(|line| {
             let fields: Vec<&str> = line.split_whitespace().collect();
             if fields.len() < 4 { return None; }
-            // State 0A = LISTEN
             if fields[3] != "0A" { return None; }
             let addr = fields[1];
             let port_hex = addr.split(':').nth(1)?;
@@ -145,12 +133,10 @@ async fn scan_ai_ports(findings: &mut Vec<Finding>) {
 
     for (port, service) in AI_PORTS {
         if listening_ports.contains(port) {
-            // Check if bound to 0.0.0.0 (all interfaces)
             let is_external = tcp_data.lines().skip(1).any(|line| {
                 let fields: Vec<&str> = line.split_whitespace().collect();
                 if fields.len() < 4 || fields[3] != "0A" { return false; }
                 let addr = fields[1];
-                // 00000000 = 0.0.0.0 (all interfaces)
                 addr.starts_with("00000000:")
                     && addr.ends_with(&format!("{:04X}", port))
             });
@@ -162,6 +148,7 @@ async fn scan_ai_ports(findings: &mut Vec<Finding>) {
                         .with_fix(format!("Bind {} to 127.0.0.1 or use a reverse proxy with authentication", service))
                         .with_cvss(9.1)
                         .with_mitre(vec!["T1190", "T1071.001"])
+                        .with_nist(vec!["SC-7", "AC-17", "IA-2"])
                         .with_engine("Spectre")
                         .with_rule("DK-SPE-001"),
                 );
@@ -177,6 +164,7 @@ async fn scan_ai_ports(findings: &mut Vec<Finding>) {
 }
 
 /// Find world-readable or dangerous model files
+/// ATT&CK T1195.002 (Supply Chain: Compromise Software Supply Chain)
 async fn scan_model_files(findings: &mut Vec<Finding>) {
     let search_dirs = vec![
         "/home", "/opt", "/srv", "/var/lib", "/tmp",
@@ -198,6 +186,7 @@ async fn scan_model_files(findings: &mut Vec<Finding>) {
                 .with_fix("Convert to SafeTensors (.safetensors) format or use torch.load(weights_only=True)")
                 .with_cvss(8.8)
                 .with_mitre(vec!["T1059.006", "T1195.002"])
+                .with_nist(vec!["SI-7", "SA-12"])
                 .with_engine("Spectre")
                 .with_rule("DK-SPE-003"),
         );
@@ -210,6 +199,7 @@ async fn scan_model_files(findings: &mut Vec<Finding>) {
                 .with_fix(format!("chmod 640 '{}' && chown root:ml-team '{}'", path, path))
                 .with_cvss(5.3)
                 .with_mitre(vec!["T1005", "T1195.002"])
+                .with_nist(vec!["SC-28", "AC-3"])
                 .with_engine("Spectre")
                 .with_rule("DK-SPE-004"),
         );
@@ -217,7 +207,7 @@ async fn scan_model_files(findings: &mut Vec<Finding>) {
 }
 
 fn scan_dir_for_models(dir: &str, dangerous: &mut Vec<String>, world_readable: &mut Vec<String>, depth: u32) {
-    if depth > 5 { return; } // Limit recursion depth
+    if depth > 5 { return; }
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
@@ -227,7 +217,6 @@ fn scan_dir_for_models(dir: &str, dangerous: &mut Vec<String>, world_readable: &
         let path = entry.path();
         if path.is_dir() {
             let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-            // Skip hidden dirs, node_modules, .git, etc.
             if name.starts_with('.') || name == "node_modules" || name == "__pycache__" {
                 continue;
             }
@@ -246,13 +235,12 @@ fn scan_dir_for_models(dir: &str, dangerous: &mut Vec<String>, world_readable: &
                 .collect();
 
             if all_model_exts.contains(&ext_str.as_str()) {
-                // Check if world-readable
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;
                     if let Ok(meta) = path.metadata() {
                         let mode = meta.permissions().mode();
-                        if mode & 0o004 != 0 { // Others can read
+                        if mode & 0o004 != 0 {
                             world_readable.push(path_str);
                         }
                     }
@@ -262,9 +250,9 @@ fn scan_dir_for_models(dir: &str, dangerous: &mut Vec<String>, world_readable: &
     }
 }
 
-/// Check for AI/ML API keys leaked in environment variables or common config files
+/// Check for AI/ML API keys leaked in environment variables or config files
+/// ATT&CK T1552.001 (Unsecured Credentials: Credentials in Files)
 async fn scan_api_keys(findings: &mut Vec<Finding>) {
-    // Check environment variables
     for (key, service) in KEY_PATTERNS {
         if std::env::var(key).is_ok() {
             findings.push(
@@ -273,13 +261,13 @@ async fn scan_api_keys(findings: &mut Vec<Finding>) {
                     .with_fix(format!("Use a secrets manager (Vault, SOPS) instead of env var {}", key))
                     .with_cvss(6.5)
                     .with_mitre(vec!["T1552.001"])
+                    .with_nist(vec!["IA-5(7)", "SC-28"])
                     .with_engine("Spectre")
                     .with_rule("DK-SPE-005"),
             );
         }
     }
 
-    // Check common config files for hardcoded keys
     let config_files = vec![
         format!("{}/.bashrc", std::env::var("HOME").unwrap_or_default()),
         format!("{}/.zshrc", std::env::var("HOME").unwrap_or_default()),
@@ -298,6 +286,7 @@ async fn scan_api_keys(findings: &mut Vec<Finding>) {
                             .with_fix(format!("Remove {} from {} and use a secrets manager", key, file_path))
                             .with_cvss(7.5)
                             .with_mitre(vec!["T1552.001", "T1552.004"])
+                            .with_nist(vec!["IA-5(7)", "SC-28"])
                             .with_engine("Spectre")
                             .with_rule("DK-SPE-006"),
                     );
@@ -307,9 +296,9 @@ async fn scan_api_keys(findings: &mut Vec<Finding>) {
     }
 }
 
-/// Check GPU memory for residual data after AI workloads
+/// Check GPU memory state
+/// ATT&CK T1005 (Data from Local System)
 async fn scan_gpu_memory(findings: &mut Vec<Finding>) {
-    // NVIDIA GPU check
     if let Ok(output) = std::process::Command::new("nvidia-smi")
         .args(["--query-gpu=index,memory.used,memory.total,compute-mode", "--format=csv,noheader,nounits"])
         .output()
@@ -324,14 +313,12 @@ async fn scan_gpu_memory(findings: &mut Vec<Finding>) {
                     let mem_total: f64 = parts[2].trim().parse().unwrap_or(1.0);
                     let compute_mode = parts[3].trim();
 
-                    // Check for significant memory usage with no active processes
-                    if mem_used > 100.0 { // More than 100MB used
+                    if mem_used > 100.0 {
                         let pct = (mem_used / mem_total * 100.0) as u32;
-                        // Check if any compute processes are running
                         let procs = std::process::Command::new("nvidia-smi")
                             .args(["--query-compute-apps=pid", "--format=csv,noheader", &format!("--id={}", gpu_idx)])
                             .output();
-                        
+
                         let active_procs = procs.map(|o| {
                             String::from_utf8_lossy(&o.stdout).lines().count()
                         }).unwrap_or(0);
@@ -343,18 +330,19 @@ async fn scan_gpu_memory(findings: &mut Vec<Finding>) {
                                     .with_fix("Run 'nvidia-smi --gpu-reset' or explicitly free CUDA memory in your application")
                                     .with_cvss(4.0)
                                     .with_mitre(vec!["T1005"])
+                                    .with_nist(vec!["SC-4", "SC-28"])
                                     .with_engine("Spectre")
                                     .with_rule("DK-SPE-007"),
                             );
                         }
                     }
 
-                    // Check compute mode
                     if compute_mode == "Default" {
                         findings.push(
                             Finding::info(format!("GPU {} in Default compute mode — shared access enabled", gpu_idx))
                                 .with_detail("Multiple processes/users can access this GPU simultaneously")
                                 .with_fix("Set compute mode to Exclusive_Process for single-tenant ML workloads: nvidia-smi -c EXCLUSIVE_PROCESS")
+                                .with_nist(vec!["AC-3", "SC-4"])
                                 .with_engine("Spectre")
                                 .with_rule("DK-SPE-008"),
                         );
@@ -366,6 +354,7 @@ async fn scan_gpu_memory(findings: &mut Vec<Finding>) {
 }
 
 /// Scan Python files for unsafe deserialization patterns
+/// ATT&CK T1059.006 (Python), T1203 (Exploitation for Client Execution)
 async fn scan_unsafe_deserialization(findings: &mut Vec<Finding>) {
     let search_dirs = vec!["/home", "/opt", "/srv"];
     let mut unsafe_files: Vec<(String, String)> = Vec::new();
@@ -387,6 +376,7 @@ async fn scan_unsafe_deserialization(findings: &mut Vec<Finding>) {
                 .with_cvss(8.1)
                 .with_mitre(vec!["T1059.006", "T1203"])
                 .with_cve(vec!["CVE-2019-6446", "CVE-2022-45907"])
+                .with_nist(vec!["SI-7", "SI-10"])
                 .with_engine("Spectre")
                 .with_rule("DK-SPE-009"),
         );
@@ -412,7 +402,6 @@ fn find_unsafe_python_loads(dir: &str, results: &mut Vec<(String, String)>, dept
             if let Ok(content) = std::fs::read_to_string(&path) {
                 for pattern in UNSAFE_LOAD_PATTERNS {
                     if content.contains(pattern) {
-                        // Don't flag if there's a safe variant nearby
                         let safe = match *pattern {
                             "torch.load" => content.contains("weights_only=True") || content.contains("weights_only = True"),
                             "yaml.load" => content.contains("SafeLoader") || content.contains("safe_load"),
@@ -420,7 +409,7 @@ fn find_unsafe_python_loads(dir: &str, results: &mut Vec<(String, String)>, dept
                         };
                         if !safe {
                             results.push((path.to_string_lossy().to_string(), pattern.to_string()));
-                            break; // One finding per file
+                            break;
                         }
                     }
                 }
@@ -430,6 +419,7 @@ fn find_unsafe_python_loads(dir: &str, results: &mut Vec<(String, String)>, dept
 }
 
 /// Check for exposed / insecure Jupyter configurations
+/// ATT&CK T1190, NIST AC-3/IA-2
 async fn scan_jupyter_config(findings: &mut Vec<Finding>) {
     let home = std::env::var("HOME").unwrap_or_default();
     let jupyter_configs = vec![
@@ -440,8 +430,7 @@ async fn scan_jupyter_config(findings: &mut Vec<Finding>) {
 
     for config_path in &jupyter_configs {
         if let Ok(content) = std::fs::read_to_string(config_path) {
-            // Check for disabled authentication
-            if content.contains("NotebookApp.token = ''") 
+            if content.contains("NotebookApp.token = ''")
                 || content.contains("ServerApp.token = ''")
                 || content.contains("NotebookApp.password = ''")
                 || content.contains("c.NotebookApp.disable_check_xsrf = True")
@@ -452,12 +441,12 @@ async fn scan_jupyter_config(findings: &mut Vec<Finding>) {
                         .with_fix("Set a token or password: jupyter notebook --generate-config && jupyter notebook password")
                         .with_cvss(9.8)
                         .with_mitre(vec!["T1190", "T1059.006"])
+                        .with_nist(vec!["AC-3", "IA-2", "SC-7"])
                         .with_engine("Spectre")
                         .with_rule("DK-SPE-010"),
                 );
             }
 
-            // Check for permissive IP binding
             if content.contains("ip = '0.0.0.0'") || content.contains("ip = '*'") {
                 findings.push(
                     Finding::high(format!("Jupyter bound to all interfaces in {}", config_path))
@@ -465,6 +454,7 @@ async fn scan_jupyter_config(findings: &mut Vec<Finding>) {
                         .with_fix("Set c.ServerApp.ip = '127.0.0.1' to bind to localhost only")
                         .with_cvss(7.5)
                         .with_mitre(vec!["T1190"])
+                        .with_nist(vec!["SC-7", "AC-17"])
                         .with_engine("Spectre")
                         .with_rule("DK-SPE-011"),
                 );
@@ -474,21 +464,23 @@ async fn scan_jupyter_config(findings: &mut Vec<Finding>) {
 }
 
 /// Check for container-based AI service exposure
+/// ATT&CK T1611 (Escape to Host), T1610 (Deploy Container)
 async fn scan_container_ai_exposure(findings: &mut Vec<Finding>) {
-    // Check for Docker socket exposure
     if Path::new("/var/run/docker.sock").exists() {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             if let Ok(meta) = std::fs::metadata("/var/run/docker.sock") {
                 let mode = meta.permissions().mode();
-                if mode & 0o006 != 0 { // World-readable/writable
+                if mode & 0o006 != 0 {
                     findings.push(
                         Finding::critical("Docker socket world-accessible — container escape possible")
                             .with_detail("An attacker with Docker socket access can mount the host filesystem and escalate to root")
                             .with_fix("Restrict /var/run/docker.sock to the docker group: chmod 660 /var/run/docker.sock")
                             .with_cvss(9.9)
                             .with_mitre(vec!["T1611", "T1610"])
+                            .with_stig("V-230353")
+                            .with_nist(vec!["AC-6", "SC-39"])
                             .with_engine("Spectre")
                             .with_rule("DK-SPE-012"),
                     );
@@ -497,7 +489,6 @@ async fn scan_container_ai_exposure(findings: &mut Vec<Finding>) {
         }
     }
 
-    // Check for running AI containers with --privileged or host network
     if let Ok(output) = std::process::Command::new("docker")
         .args(["ps", "--format", "{{.Names}}\t{{.Image}}\t{{.Ports}}"])
         .output()
@@ -505,7 +496,7 @@ async fn scan_container_ai_exposure(findings: &mut Vec<Finding>) {
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let ai_images = ["ollama", "vllm", "triton", "tensorrt", "text-generation", "huggingface", "jupyter", "mlflow"];
-            
+
             for line in stdout.lines() {
                 let parts: Vec<&str> = line.split('\t').collect();
                 if parts.len() >= 2 {
@@ -519,6 +510,7 @@ async fn scan_container_ai_exposure(findings: &mut Vec<Finding>) {
                                     .with_fix("Use Docker's -p 127.0.0.1:<port>:<port> to bind to localhost only")
                                     .with_cvss(6.5)
                                     .with_mitre(vec!["T1190", "T1610"])
+                                    .with_nist(vec!["SC-7", "AC-17"])
                                     .with_engine("Spectre")
                                     .with_rule("DK-SPE-013"),
                             );
@@ -533,13 +525,12 @@ async fn scan_container_ai_exposure(findings: &mut Vec<Finding>) {
 /// Check for prompt injection vectors in LLM configurations
 async fn scan_prompt_injection_vectors(findings: &mut Vec<Finding>) {
     let home = std::env::var("HOME").unwrap_or_default();
-    
-    // Check for world-readable system prompt files
+
     let prompt_patterns = vec![
         format!("{}/.ollama", home),
         format!("{}/.config/lmstudio", home),
-        format!("{}/.continue", home),     // Continue.dev
-        format!("{}/.tabby", home),         // TabbyML
+        format!("{}/.continue", home),
+        format!("{}/.tabby", home),
         format!("{}/.local/share/ollama", home),
     ];
 
@@ -563,6 +554,7 @@ async fn scan_prompt_injection_vectors(findings: &mut Vec<Finding>) {
                                                 .with_fix(format!("chmod 600 '{}'", path.display()))
                                                 .with_cvss(4.3)
                                                 .with_mitre(vec!["T1552.001"])
+                                                .with_nist(vec!["AC-3", "SC-28"])
                                                 .with_engine("Spectre")
                                                 .with_rule("DK-SPE-014"),
                                         );

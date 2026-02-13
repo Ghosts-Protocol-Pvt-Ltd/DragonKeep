@@ -63,19 +63,29 @@ impl Severity {
 }
 
 /// A single finding from an engine scan
+///
+/// Framework alignment:
+///   - CVSS v3.1 base scores (FIRST.org)
+///   - CIS Benchmarks (cisecurity.org)
+///   - MITRE ATT&CK technique IDs (attack.mitre.org) — also maps to Atomic Red Team tests
+///   - DISA STIGs (public.cyber.mil)
+///   - NIST SP 800-53 Rev 5 controls (csrc.nist.gov)
+///   - CVE identifiers (cve.mitre.org)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Finding {
     pub title: String,
     pub severity: Severity,
     pub detail: Option<String>,
     pub fix: Option<String>,
-    /// CVSS v3.1 base score (0.0 – 10.0)
+    /// CVSS v3.1 base score (0.0 – 10.0) per FIRST.org specification
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cvss: Option<f32>,
     /// CIS Benchmark ID (e.g., "1.1.1.1", "5.2.4")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cis_id: Option<String>,
     /// MITRE ATT&CK technique IDs (e.g., ["T1059", "T1053.003"])
+    /// These directly map to Atomic Red Team tests at:
+    /// https://github.com/redcanaryco/atomic-red-team/tree/master/atomics/<technique_id>
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mitre: Option<Vec<String>>,
     /// CVE identifiers if applicable
@@ -87,6 +97,12 @@ pub struct Finding {
     /// Unique rule ID for deduplication/suppression (e.g., "DK-SEN-001")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rule_id: Option<String>,
+    /// DISA STIG ID (e.g., "RHEL-08-010010") — public.cyber.mil
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stig: Option<String>,
+    /// NIST SP 800-53 Rev 5 control IDs (e.g., ["AC-6", "CM-6(1)"])
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nist: Option<Vec<String>>,
 }
 
 impl Finding {
@@ -97,6 +113,7 @@ impl Finding {
             detail: None, fix: None, cvss: None,
             cis_id: None, mitre: None, cve: None,
             engine: None, rule_id: None,
+            stig: None, nist: None,
         }
     }
 
@@ -107,6 +124,7 @@ impl Finding {
             detail: None, fix: None, cvss: None,
             cis_id: None, mitre: None, cve: None,
             engine: None, rule_id: None,
+            stig: None, nist: None,
         }
     }
 
@@ -117,6 +135,7 @@ impl Finding {
             detail: None, fix: None, cvss: None,
             cis_id: None, mitre: None, cve: None,
             engine: None, rule_id: None,
+            stig: None, nist: None,
         }
     }
 
@@ -127,6 +146,7 @@ impl Finding {
             detail: None, fix: None, cvss: None,
             cis_id: None, mitre: None, cve: None,
             engine: None, rule_id: None,
+            stig: None, nist: None,
         }
     }
 
@@ -137,6 +157,7 @@ impl Finding {
             detail: None, fix: None, cvss: None,
             cis_id: None, mitre: None, cve: None,
             engine: None, rule_id: None,
+            stig: None, nist: None,
         }
     }
 
@@ -177,6 +198,18 @@ impl Finding {
 
     pub fn with_rule(mut self, rule_id: impl Into<String>) -> Self {
         self.rule_id = Some(rule_id.into());
+        self
+    }
+
+    /// DISA STIG reference (e.g., "RHEL-08-010010")
+    pub fn with_stig(mut self, stig_id: impl Into<String>) -> Self {
+        self.stig = Some(stig_id.into());
+        self
+    }
+
+    /// NIST SP 800-53 Rev 5 controls (e.g., ["AC-6", "CM-6(1)"])
+    pub fn with_nist(mut self, controls: Vec<&str>) -> Self {
+        self.nist = Some(controls.into_iter().map(String::from).collect());
         self
     }
 }

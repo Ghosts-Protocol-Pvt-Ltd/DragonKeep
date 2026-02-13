@@ -6,7 +6,16 @@ A command-line tool built in Rust that scans, hardens, tunes, and monitors your 
 
 ## Why DragonKeep?
 
-Most security tools do one thing. DragonKeep runs 8 engines in a single binary with zero runtime dependencies, producing findings with CVSS v3.1 scores, CIS Benchmark IDs, MITRE ATT&CK mappings, and SARIF output for GitHub/Azure integration.
+Most security tools do one thing. DragonKeep runs 8 engines in a single binary with zero runtime dependencies, producing findings mapped to 6 industry frameworks:
+
+- **MITRE ATT&CK** — Technique IDs from [attack.mitre.org](https://attack.mitre.org) (100+ technique mappings)
+- **Atomic Red Team** — Test procedures from [Red Canary](https://github.com/redcanaryco/atomic-red-team) (ATT&CK technique IDs double as test references)
+- **NIST SP 800-53 Rev 5** — Security controls (SI, AC, CM, SC, AU, IR, SA, IA families)
+- **DISA STIG** — Defense Information Systems Agency STIGs (RHEL-08 V-230xxx series)
+- **CIS Benchmarks v8** — Center for Internet Security hardening benchmarks
+- **CVSS v3.1** — Common Vulnerability Scoring System base scores (0.0–10.0)
+
+Output in SARIF v2.1.0 for GitHub Code Scanning, Azure DevOps, and CI/CD integration.
 
 | Feature | DragonKeep | lynis | Wazuh | CrowdStrike |
 |---------|-----------|-------|-------|-------------|
@@ -20,6 +29,8 @@ Most security tools do one thing. DragonKeep runs 8 engines in a single binary w
 | CVSS scoring | ✅ | ❌ | ✅ | ✅ |
 | MITRE ATT&CK mapping | ✅ | ❌ | ✅ | ✅ |
 | CIS Benchmark IDs | ✅ | ✅ | ✅ | ✅ |
+| DISA STIG mapping | ✅ | ❌ | Partial | ✅ |
+| NIST SP 800-53 mapping | ✅ | ❌ | ❌ | ❌ |
 | GPU awareness | ✅ | ❌ | ❌ | ❌ |
 | Workload profiles | ✅ | ❌ | ❌ | ❌ |
 | Single binary | ✅ | ❌ | ❌ | ❌ |
@@ -30,11 +41,14 @@ Most security tools do one thing. DragonKeep runs 8 engines in a single binary w
 DragonKeep runs 8 specialized engines:
 
 ### 🛡️ Sentinel — Security Scanner
-- Kernel security features (ASLR, kptr_restrict, dmesg_restrict, suid_dumpable)
-- File permission audits (`/etc/shadow`, `/etc/passwd`, SUID binaries)
-- SSH configuration audit (root login, password auth, X11)
-- Rootkit indicator detection (suspicious modules, LD_PRELOAD, hidden processes)
-- Open port analysis
+- Kernel security (ASLR, kptr_restrict, dmesg_restrict, core dumps, SYN cookies, NX bit, kernel lockdown)
+- MAC enforcement verification (SELinux/AppArmor status)
+- File permission audits (`/etc/shadow`, `/etc/passwd`, `/etc/sudoers`, SUID binaries via GTFOBins)
+- SSH hardening audit (root login, password auth, X11, MaxAuthTries, idle timeout, weak ciphers)
+- Rootkit detection (Diamorphine, Reptile, bdvl, Suterusu, Adore-ng, Knark, LD_PRELOAD)
+- Credential exposure (Discord tokens, Steam tokens, browser credential stores, SSH private keys)
+- USB/DMA attack surface (Thunderbolt IOMMU, USB auto-authorization)
+- Open port analysis (10 risky port categories)
 
 ### ⚡ Forge — Performance Tuner
 - CPU governor optimization
@@ -44,11 +58,14 @@ DragonKeep runs 8 specialized engines:
 - GPU status (NVIDIA/AMD)
 - Workload profiles: `gaming`, `ai`, `creative`, `workstation`, `server`, `balanced`
 
-### 👁️ Warden — Process Monitor
+### 👁️ Warden — Process Monitor & Threat Detector
 - Real-time TUI dashboard (ratatui)
-- CPU/memory threshold alerts
-- Suspicious process detection (cryptominers, reverse shells)
-- Zombie process detection & top-N process ranking
+- CPU/memory threshold alerts with ATT&CK T1496 mapping
+- Cryptocurrency miner detection (18 known miners: xmrig, ethminer, phoenixminer, t-rex, etc.)
+- Credential stealer detection (12 known stealers: RedLine, Vidar, Raccoon, Lumma, etc.)
+- Suspicious tool runtime detection (nmap, hashcat, responder, bettercap)
+- Zombie process detection & process binary location analysis
+- Processes executing from world-writable directories (/tmp, /dev/shm)
 
 ### 🏯 Bastion — Network Security
 - Firewall audit (firewalld, ufw, iptables, nftables)
@@ -190,10 +207,25 @@ gh api repos/{owner}/{repo}/code-scanning/sarifs \
 
 Each finding includes:
 - **CVSS v3.1 base score** (0.0–10.0) mapped to `security-severity`
-- **MITRE ATT&CK technique IDs** (e.g., T1059, T1195.002)
-- **CIS Benchmark IDs** (e.g., 1.1.1.1, 5.2.4)
+- **MITRE ATT&CK technique IDs** (e.g., T1059, T1195.002) — [attack.mitre.org](https://attack.mitre.org)
+- **DISA STIG IDs** (e.g., V-230264, V-230324) — [DoD Cyber Exchange](https://public.cyber.mil/stigs/)
+- **NIST SP 800-53 controls** (e.g., SI-7, AC-6, CM-7) — [csrc.nist.gov](https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final)
+- **CIS Benchmark IDs** (e.g., 1.1.1.1, 5.2.4) — [cisecurity.org](https://www.cisecurity.org/cis-benchmarks)
 - **CVE identifiers** where applicable
 - **Unique rule IDs** (e.g., DK-SPE-001) for suppression/deduplication
+
+### Framework Sources & References
+
+| Framework | Authority | URL |
+|-----------|-----------|-----|
+| MITRE ATT&CK | The MITRE Corporation | https://attack.mitre.org |
+| Atomic Red Team | Red Canary | https://github.com/redcanaryco/atomic-red-team |
+| NIST SP 800-53 Rev 5 | National Institute of Standards and Technology | https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final |
+| DISA STIGs | Defense Information Systems Agency | https://public.cyber.mil/stigs/ |
+| CIS Benchmarks v8 | Center for Internet Security | https://www.cisecurity.org/cis-benchmarks |
+| CVSS v3.1 | FIRST.org | https://www.first.org/cvss/v3.1/specification-document |
+| GTFOBins | community | https://gtfobins.github.io |
+| NSA Hardening Guides | National Security Agency | https://www.nsa.gov/cybersecurity-guidance/ |
 
 ## Configuration
 
