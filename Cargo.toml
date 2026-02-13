@@ -1,0 +1,45 @@
+[package]
+name = "dragonkeep"
+version = "0.1.0"
+edition = "2024"
+description = "Next-gen system security, performance, and stability platform"
+license = "MIT"
+authors = ["Ghost Protocol <ghosts.lk@proton.me>"]
+repository = "https://github.com/Ghosts-Protocol-Pvt-Ltd/DragonKeep"
+keywords = ["security", "performance", "system-hardening", "monitoring", "optimization"]
+categories = ["command-line-utilities", "os"]
+
+[[bin]]
+name = "dragonkeep"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive", "color", "env"] }
+ratatui = "0.29"
+crossterm = "0.28"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+sysinfo = "0.33"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"
+thiserror = "2"
+colored = "3"
+chrono = { version = "0.4", features = ["serde"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+notify = "7"
+dirs = "6"
+glob = "0.3"
+uuid = { version = "1", features = ["v4"] }
+tabled = "0.18"
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.30", features = ["fs", "process", "signal", "net", "sched"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
