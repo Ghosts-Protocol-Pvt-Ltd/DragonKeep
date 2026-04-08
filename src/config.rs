@@ -366,3 +366,109 @@ impl Config {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_config_has_all_engines_enabled() {
+        let config = Config::default();
+        assert!(config.sentinel.enabled);
+        assert!(config.forge.enabled);
+        assert!(config.warden.enabled);
+        assert!(config.bastion.enabled);
+        assert!(config.citadel.enabled);
+        assert!(config.spectre.enabled);
+        assert!(config.aegis.enabled);
+        assert!(config.phantom.enabled);
+        assert!(config.hydra.enabled);
+        assert!(config.drake.enabled);
+        assert!(config.talon.enabled);
+    }
+
+    #[test]
+    fn default_config_safe_mode_on() {
+        let config = Config::default();
+        assert!(config.general.safe_mode);
+    }
+
+    #[test]
+    fn default_path_contains_dragonkeep() {
+        let path = Config::default_path();
+        assert!(path.to_string_lossy().contains("dragonkeep"));
+        assert!(path.to_string_lossy().ends_with("config.toml"));
+    }
+
+    #[test]
+    fn validate_clamps_cpu_threshold() {
+        let mut config = Config::default();
+        config.warden.cpu_threshold = 150.0;
+        config.validate_thresholds();
+        assert_eq!(config.warden.cpu_threshold, 100.0);
+
+        config.warden.cpu_threshold = 0.0;
+        config.validate_thresholds();
+        assert_eq!(config.warden.cpu_threshold, 1.0);
+    }
+
+    #[test]
+    fn validate_clamps_memory_threshold() {
+        let mut config = Config::default();
+        config.warden.memory_threshold = -5.0;
+        config.validate_thresholds();
+        assert_eq!(config.warden.memory_threshold, 1.0);
+
+        config.warden.memory_threshold = 200.0;
+        config.validate_thresholds();
+        assert_eq!(config.warden.memory_threshold, 100.0);
+    }
+
+    #[test]
+    fn validate_fixes_zero_refresh_interval() {
+        let mut config = Config::default();
+        config.warden.refresh_interval = 0;
+        config.validate_thresholds();
+        assert_eq!(config.warden.refresh_interval, 500);
+    }
+
+    #[test]
+    fn validate_caps_refresh_interval() {
+        let mut config = Config::default();
+        config.warden.refresh_interval = 999_999_999;
+        config.validate_thresholds();
+        assert_eq!(config.warden.refresh_interval, 3_600_000);
+    }
+
+    #[test]
+    fn validate_rejects_tmp_report_dir() {
+        let mut config = Config::default();
+        config.general.report_dir = "/tmp/reports".to_string();
+        config.validate_thresholds();
+        assert_eq!(config.general.report_dir, "/var/lib/dragonkeep/reports");
+    }
+
+    #[test]
+    fn load_from_rejects_empty_path() {
+        let result = Config::load_from("");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn default_config_serializes() {
+        let config = Config::default();
+        let toml_str = toml::to_string(&config).unwrap();
+        assert!(toml_str.contains("[general]"));
+        assert!(toml_str.contains("[sentinel]"));
+        assert!(toml_str.contains("safe_mode = true"));
+    }
+
+    #[test]
+    fn default_config_roundtrips() {
+        let config = Config::default();
+        let toml_str = toml::to_string(&config).unwrap();
+        let parsed: Config = toml::from_str(&toml_str).unwrap();
+        assert_eq!(parsed.general.safe_mode, config.general.safe_mode);
+        assert_eq!(parsed.warden.cpu_threshold, config.warden.cpu_threshold);
+    }
+}

@@ -449,3 +449,135 @@ pub fn print_community_status() {
     eprintln!("    {} dragonkeep remediate                Auto-remediate", "→".green());
     eprintln!();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::{Finding, Severity};
+
+    #[test]
+    fn default_profiles_has_expected_count() {
+        let profiles = default_profiles();
+        assert_eq!(profiles.len(), 8);
+    }
+
+    #[test]
+    fn default_profiles_names() {
+        let profiles = default_profiles();
+        let names: Vec<&str> = profiles.iter().map(|p| p.name.as_str()).collect();
+        assert!(names.contains(&"quick"));
+        assert!(names.contains(&"standard"));
+        assert!(names.contains(&"deep"));
+        assert!(names.contains(&"malware"));
+        assert!(names.contains(&"compliance"));
+    }
+
+    #[test]
+    fn deep_profile_has_all_engines() {
+        let profiles = default_profiles();
+        let deep = profiles.iter().find(|p| p.name == "deep").unwrap();
+        assert_eq!(deep.engines.len(), 11);
+    }
+
+    #[test]
+    fn security_score_perfect_with_no_findings() {
+        let score = calculate_security_score(&[]);
+        assert_eq!(score.overall, 100);
+        assert_eq!(score.grade, "A+");
+    }
+
+    #[test]
+    fn security_score_deductions() {
+        let findings = vec![
+            Finding::critical("test").with_engine("Sentinel"),
+            Finding::high("test").with_engine("Sentinel"),
+        ];
+        let score = calculate_security_score(&findings);
+        // critical = -15, high = -8 → 100 - 23 = 77
+        assert_eq!(score.overall, 77);
+        assert_eq!(score.grade, "B");
+    }
+
+    #[test]
+    fn security_score_saturates_at_zero() {
+        let findings: Vec<Finding> = (0..10)
+            .map(|_| Finding::critical("bad").with_engine("Hydra"))
+            .collect();
+        let score = calculate_security_score(&findings);
+        // 10 * 15 = 150 deductions, saturates at 0
+        assert_eq!(score.overall, 0);
+        assert_eq!(score.grade, "F");
+    }
+
+    #[test]
+    fn security_score_pass_no_deduction() {
+        let findings = vec![
+            Finding::pass("Good config").with_engine("Sentinel"),
+            Finding::pass("Firewall active").with_engine("Bastion"),
+        ];
+        let score = calculate_security_score(&findings);
+        assert_eq!(score.overall, 100);
+    }
+
+    #[test]
+    fn security_score_grade_boundaries() {
+        // 1 critical = -15 → 85 = A
+        let score = calculate_security_score(&[
+            Finding::critical("x").with_engine("S"),
+        ]);
+        assert_eq!(score.grade, "A");
+
+        // 3 criticals = -45 → 55 = D
+        let findings: Vec<_> = (0..3).map(|_| Finding::critical("x").with_engine("S")).collect();
+        let score = calculate_security_score(&findings);
+        assert_eq!(score.grade, "D");
+    }
+
+    #[test]
+    fn security_score_has_recommendations() {
+        let findings = vec![
+            Finding::critical("bad").with_engine("Hydra"),
+        ];
+        let score = calculate_security_score(&findings);
+        assert!(!score.recommendations.is_empty());
+        assert!(score.recommendations.iter().any(|r| r.contains("URGENT") || r.contains("MALWARE")));
+    }
+
+    #[test]
+    fn security_score_per_engine_categories() {
+        let findings = vec![
+            Finding::high("a").with_engine("Sentinel"),
+            Finding::warning("b").with_engine("Sentinel"),
+            Finding::critical("c").with_engine("Hydra"),
+        ];
+        let score = calculate_security_score(&findings);
+        assert!(score.categories.len() >= 2);
+        let sentinel = score.categories.iter().find(|c| c.name == "Sentinel").unwrap();
+        // high(-8) + warning(-3) = -11 → 89
+        assert_eq!(sentinel.score, 89);
+    }
+
+    #[test]
+    fn export_ioc_filters_pass_and_info() {
+        let findings = vec![
+            Finding::critical("bad").with_engine("Hydra").with_rule("R1"),
+            Finding::pass("good").with_engine("S").with_rule("R2"),
+            Finding::info("note").with_engine("S").with_rule("R3"),
+        ];
+        let json = export_findings_ioc(&findings);
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let indicators = parsed["indicators"].as_array().unwrap();
+        // Only critical should remain (pass + info filtered out)
+        assert_eq!(indicators.len(), 1);
+        assert_eq!(indicators[0]["severity"], "CRIT");
+    }
+
+    #[test]
+    fn export_ioc_format() {
+        let json = export_findings_ioc(&[]);
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["version"], "1.0");
+        assert_eq!(parsed["generator"], "DragonKeep Community Edition");
+        assert!(parsed["timestamp"].as_str().unwrap().len() > 10);
+    }
+}

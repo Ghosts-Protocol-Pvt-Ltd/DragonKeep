@@ -363,3 +363,100 @@ impl Reporter {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::{Finding, Severity};
+
+    fn sample_findings() -> Vec<Finding> {
+        vec![
+            Finding::critical("Root shell detected")
+                .with_cvss(10.0)
+                .with_engine("Hydra"),
+            Finding::high("SSH password auth")
+                .with_cvss(7.5)
+                .with_engine("Sentinel"),
+            Finding::warning("Stale packages")
+                .with_engine("Aegis"),
+            Finding::info("IPv6 disabled")
+                .with_engine("Bastion"),
+            Finding::pass("Firewall active")
+                .with_engine("Bastion"),
+        ]
+    }
+
+    #[test]
+    fn reporter_new_is_empty() {
+        let reporter = Reporter::new();
+        assert!(reporter.all_findings().is_empty());
+    }
+
+    #[test]
+    fn add_section_and_all_findings() {
+        let mut reporter = Reporter::new();
+        reporter.add_section("Test", sample_findings());
+        assert_eq!(reporter.all_findings().len(), 5);
+    }
+
+    #[test]
+    fn compute_summary_counts() {
+        let mut reporter = Reporter::new();
+        reporter.add_section("Test", sample_findings());
+        let summary = reporter.compute_summary();
+        assert_eq!(summary.total_findings, 5);
+        assert_eq!(summary.critical, 1);
+        assert_eq!(summary.high, 1);
+        assert_eq!(summary.warning, 1);
+        assert_eq!(summary.info, 1);
+        assert_eq!(summary.pass, 1);
+    }
+
+    #[test]
+    fn compute_summary_max_cvss() {
+        let mut reporter = Reporter::new();
+        reporter.add_section("Test", sample_findings());
+        let summary = reporter.compute_summary();
+        assert_eq!(summary.max_cvss, 10.0);
+    }
+
+    #[test]
+    fn compute_summary_empty() {
+        let reporter = Reporter::new();
+        let summary = reporter.compute_summary();
+        assert_eq!(summary.total_findings, 0);
+        assert_eq!(summary.max_cvss, 0.0);
+    }
+
+    #[test]
+    fn multiple_sections() {
+        let mut reporter = Reporter::new();
+        reporter.add_section("Sentinel", vec![Finding::high("A")]);
+        reporter.add_section("Hydra", vec![Finding::critical("B"), Finding::warning("C")]);
+        assert_eq!(reporter.all_findings().len(), 3);
+        let summary = reporter.compute_summary();
+        assert_eq!(summary.critical, 1);
+        assert_eq!(summary.high, 1);
+        assert_eq!(summary.warning, 1);
+    }
+
+    #[test]
+    fn build_report_has_hostname() {
+        let mut reporter = Reporter::new();
+        reporter.add_section("Test", vec![]);
+        let report = reporter.build_report();
+        // hostname should be populated (even if "unknown")
+        assert!(!report.hostname.is_empty());
+        assert!(!report.generated_at.is_empty());
+    }
+
+    #[test]
+    fn report_serializes_to_json() {
+        let mut reporter = Reporter::new();
+        reporter.add_section("Test", sample_findings());
+        let report = reporter.build_report();
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("Root shell detected"));
+        assert!(json.contains("summary"));
+    }
+}
