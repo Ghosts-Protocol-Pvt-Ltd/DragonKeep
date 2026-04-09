@@ -19,7 +19,7 @@ pub struct ReportSection {
     pub findings: Vec<Finding>,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct ReportSummary {
     pub total_findings: usize,
     pub critical: usize,

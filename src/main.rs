@@ -3,6 +3,10 @@ mod engine;
 mod config;
 mod report;
 mod community;
+pub mod compliance;
+mod license;
+pub mod dashboard;
+pub mod scheduler;
 
 use clap::Parser;
 use cli::Cli;

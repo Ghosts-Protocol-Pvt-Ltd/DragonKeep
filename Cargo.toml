@@ -1,6 +1,6 @@
 [package]
 name = "dragonkeep"
-version = "0.4.1"
+version = "0.5.0"
 edition = "2024"
 description = "Next-gen system security, threat defense & performance platform — Community Edition — 11 engines: Sentinel (security), Forge (performance), Warden (processes), Bastion (network), Citadel (hardening), Spectre (AI/ML threats), Aegis (supply chain), Phantom (anomaly detection), Hydra (malware defense), Drake (ransomware defense), Talon (threat hunting)"
 license = "MIT"
@@ -34,6 +34,10 @@ dirs = "6"
 glob = "0.3"
 uuid = { version = "1", features = ["v4"] }
 tabled = "0.18"
+ring = "0.17"
+base64 = "0.22"
+axum = "0.8"
+tower-http = { version = "0.6", features = ["cors", "fs"] }
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.30", features = ["fs", "process", "signal", "net", "sched"] }

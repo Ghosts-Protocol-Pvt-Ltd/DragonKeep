@@ -129,6 +129,46 @@ pub enum Command {
 
     /// Show DragonKeep Community Edition info
     Community,
+
+    // ==================== PRO FEATURES ====================
+
+    /// View or activate license (Pro/Enterprise)
+    License {
+        /// Activate a license key (JSON string)
+        #[arg(long)]
+        activate: Option<String>,
+    },
+
+    /// Manage scheduled scans (Pro+)
+    Schedule {
+        /// Action: install, uninstall, status, list, diff, trend, cleanup
+        action: String,
+
+        /// For diff: old report filename
+        #[arg(long)]
+        old: Option<String>,
+
+        /// For diff: new report filename
+        #[arg(long)]
+        new: Option<String>,
+
+        /// For trend: number of days to analyze
+        #[arg(long, default_value = "30")]
+        days: usize,
+    },
+
+    /// Run compliance check against a framework (Pro+)
+    Comply {
+        /// Framework: cis-l1, cis-l2, stig, nist, pci-dss
+        framework: String,
+    },
+
+    /// Launch web dashboard (Pro+)
+    Dashboard {
+        /// Bind address
+        #[arg(long, default_value = "127.0.0.1:9090")]
+        bind: String,
+    },
 }
 
 impl Cli {
@@ -201,6 +241,18 @@ impl Cli {
             }
             Some(Command::Community) => {
                 self.cmd_community().await
+            }
+            Some(Command::License { ref activate }) => {
+                self.cmd_license(activate.clone()).await
+            }
+            Some(Command::Schedule { ref action, ref old, ref new, days }) => {
+                self.cmd_schedule(action, old.clone(), new.clone(), days).await
+            }
+            Some(Command::Comply { ref framework }) => {
+                self.cmd_comply(&config, framework).await
+            }
+            Some(Command::Dashboard { ref bind }) => {
+                self.cmd_dashboard(bind).await
             }
             None => {
                 // Default: quick status
@@ -564,6 +616,215 @@ impl Cli {
 
     async fn cmd_community(&self) -> anyhow::Result<()> {
         community::print_community_status();
+        Ok(())
+    }
+
+    // ==================== PRO FEATURE COMMANDS ====================
+
+    async fn cmd_license(&self, activate: Option<String>) -> anyhow::Result<()> {
+        use crate::license;
+
+        if let Some(license_json) = activate {
+            match license::activate_license(&license_json) {
+                Ok(signed) => {
+                    let tier = license::get_tier();
+                    eprintln!("  {} License activated! Tier: {:?}", "✓".green().bold(), tier);
+                    eprintln!("  Key: {}", signed.license.key);
+                }
+                Err(e) => {
+                    eprintln!("  {} License activation failed: {}", "✗".red().bold(), e);
+                }
+            }
+            return Ok(());
+        }
+
+        // Show current license info
+        let tier = license::get_tier();
+        eprintln!("{}", "  ── DragonKeep License ──".cyan().bold());
+        eprintln!("  Tier: {:?}", tier);
+
+        match license::load_license() {
+            Ok(signed) => {
+                eprintln!("  Key:  {}", signed.license.key);
+                eprintln!("  To:   {}", signed.license.issued_to);
+                eprintln!("  Exp:  {}", signed.license.expires_at);
+                match license::verify_license(&signed) {
+                    Ok(_) => eprintln!("  Status: {} Valid", "✓".green()),
+                    Err(e) => eprintln!("  Status: {} Invalid — {}", "✗".red(), e),
+                }
+            }
+            Err(_) => {
+                eprintln!("  No license installed (Community Edition)");
+                eprintln!();
+                eprintln!("  Upgrade at https://ghosts.lk/dragonkeep");
+                eprintln!("  Pro features: scheduled scans, compliance, web dashboard, report diffing");
+            }
+        }
+        Ok(())
+    }
+
+    async fn cmd_schedule(&self, action: &str, old: Option<String>, new: Option<String>, days: usize) -> anyhow::Result<()> {
+        use crate::license;
+        use crate::scheduler::{Scheduler, ScheduleConfig, diff_reports, trend_analysis};
+
+        if !license::has_feature("scheduled_scans") {
+            eprintln!("  {} Scheduled scans require a Pro license.", "✗".red().bold());
+            eprintln!("  Upgrade at https://ghosts.lk/dragonkeep");
+            return Ok(());
+        }
+
+        let sched_config = ScheduleConfig::default();
+        let scheduler = Scheduler::new(sched_config);
+
+        match action {
+            "install" => {
+                scheduler.install_cron()?;
+                eprintln!("  {} Scheduled scan installed", "✓".green().bold());
+                eprintln!("  {}", scheduler.generate_crontab_entry());
+            }
+            "uninstall" => {
+                scheduler.uninstall_cron()?;
+                eprintln!("  {} Scheduled scan removed", "✓".green().bold());
+            }
+            "status" => {
+                eprintln!("{}", "  ── Schedule Status ──".cyan().bold());
+                eprintln!("{}", scheduler.show_status());
+            }
+            "list" => {
+                let reports = scheduler.list_reports()?;
+                eprintln!("{}", "  ── Saved Reports ──".cyan().bold());
+                if reports.is_empty() {
+                    eprintln!("  No reports found.");
+                } else {
+                    for r in &reports {
+                        eprintln!("  {} — {} KB", 
+                            r.path.file_name().unwrap_or_default().to_string_lossy(),
+                            r.size_bytes / 1024);
+                    }
+                    eprintln!("\n  Total: {} reports", reports.len());
+                }
+            }
+            "diff" => {
+                let old_path = old.ok_or_else(|| anyhow::anyhow!("--old required for diff"))?;
+                let new_path = new.ok_or_else(|| anyhow::anyhow!("--new required for diff"))?;
+                let diff = diff_reports(std::path::Path::new(&old_path), std::path::Path::new(&new_path))?;
+                
+                eprintln!("{}", "  ── Report Diff ──".cyan().bold());
+                eprintln!("  New findings:      {}", format!("{}", diff.new_findings.len()).red());
+                eprintln!("  Resolved findings: {}", format!("{}", diff.resolved_findings.len()).green());
+                eprintln!("  Unchanged:         {}", diff.unchanged_count);
+                
+                if !diff.new_findings.is_empty() {
+                    eprintln!("\n  {} New:", "⚠".yellow());
+                    for f in &diff.new_findings {
+                        eprintln!("    {} {}", f.severity.colored_label(), f.title);
+                    }
+                }
+                if !diff.resolved_findings.is_empty() {
+                    eprintln!("\n  {} Resolved:", "✓".green());
+                    for f in &diff.resolved_findings {
+                        eprintln!("    {} {}", f.severity.colored_label(), f.title);
+                    }
+                }
+            }
+            "trend" => {
+                let reports = scheduler.list_reports()?;
+                let trend = trend_analysis(&reports, days)?;
+                
+                eprintln!("{}", "  ── Security Trend ──".cyan().bold());
+                eprintln!("  Scans analyzed: {}", trend.total_scans);
+                eprintln!("  Avg findings:   {:.1}", trend.avg_findings);
+                eprintln!("  Trend:          {:?}", trend.trend);
+                
+                if !trend.critical_trend.is_empty() {
+                    eprintln!("\n  Critical findings over time:");
+                    for (date, count) in &trend.critical_trend {
+                        let bar = "█".repeat(*count);
+                        eprintln!("    {} {} {}", date, bar.red(), count);
+                    }
+                }
+            }
+            "cleanup" => {
+                let removed = scheduler.cleanup_old_reports()?;
+                eprintln!("  {} Cleaned up {} old report(s)", "✓".green().bold(), removed);
+            }
+            _ => {
+                eprintln!("  Unknown action: {}. Use: install, uninstall, status, list, diff, trend, cleanup", action);
+            }
+        }
+        Ok(())
+    }
+
+    async fn cmd_comply(&self, config: &Config, framework: &str) -> anyhow::Result<()> {
+        use crate::license;
+        use crate::compliance;
+
+        if !license::has_feature("compliance_templates") {
+            eprintln!("  {} Compliance checks require a Pro license.", "✗".red().bold());
+            eprintln!("  Upgrade at https://ghosts.lk/dragonkeep");
+            return Ok(());
+        }
+
+        let template = match framework {
+            "cis-l1" | "cis" => compliance::cis_linux_l1(),
+            "cis-l2" => compliance::cis_linux_l2(),
+            "stig" | "stig-rhel8" => compliance::stig_rhel8(),
+            "nist" | "nist-800-53" => compliance::nist_800_53_moderate(),
+            "pci" | "pci-dss" => compliance::pci_dss_v4(),
+            _ => {
+                eprintln!("  {} Unknown framework: {}", "✗".red().bold(), framework);
+                eprintln!("  Available: cis-l1, cis-l2, stig, nist, pci-dss");
+                return Ok(());
+            }
+        };
+
+        eprintln!("{}", format!("  ── {} Compliance Check ──", template.name).cyan().bold());
+        eprintln!("  Running full scan to gather findings...\n");
+
+        // Run a full scan to get findings
+        let mut all_findings = Vec::new();
+        if let Ok(f) = sentinel::scan(config).await { all_findings.extend(f); }
+        if let Ok(f) = citadel::audit(config).await { all_findings.extend(f); }
+        if let Ok(f) = bastion::scan(config).await { all_findings.extend(f); }
+        if let Ok(f) = aegis::scan(config).await { all_findings.extend(f); }
+        if let Ok(f) = phantom::scan(config).await { all_findings.extend(f); }
+        if let Ok(f) = hydra::scan(config).await { all_findings.extend(f); }
+
+        let report = compliance::check_compliance(&template, &all_findings);
+        let output = compliance::render_compliance_report(&report, &self.format);
+        println!("{}", output);
+
+        Ok(())
+    }
+
+    async fn cmd_dashboard(&self, bind: &str) -> anyhow::Result<()> {
+        use crate::license;
+        use crate::dashboard::DashboardServer;
+        use std::net::SocketAddr;
+
+        if !license::has_feature("web_dashboard") {
+            eprintln!("  {} Web dashboard requires an Enterprise license.", "✗".red().bold());
+            eprintln!("  Upgrade at https://ghosts.lk/dragonkeep");
+            return Ok(());
+        }
+
+        let addr: SocketAddr = bind.parse()
+            .map_err(|e| anyhow::anyhow!("Invalid bind address '{}': {}", bind, e))?;
+        
+        let reports_dir = dirs::config_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("dragonkeep")
+            .join("reports");
+        std::fs::create_dir_all(&reports_dir)?;
+
+        eprintln!("{}", "  ── DragonKeep Dashboard ──".cyan().bold());
+        eprintln!("  Starting web dashboard at http://{}", addr);
+        eprintln!("  Reports dir: {}", reports_dir.display());
+        eprintln!("  Press Ctrl+C to stop\n");
+
+        let server = DashboardServer::new(addr, reports_dir);
+        server.start().await?;
+
         Ok(())
     }
 }
