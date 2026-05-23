@@ -130,6 +130,14 @@ pub enum Command {
     /// Show DragonKeep Community Edition info
     Community,
 
+    /// Drain the PhantomDragon Control orchestration queue
+    /// (defensive scans triggered by Critical findings).
+    Queue {
+        /// `list` or `run` (run consumes pending items).
+        #[arg(default_value = "list")]
+        action: String,
+    },
+
     // ==================== PRO FEATURES ====================
 
     /// View or activate license (Pro/Enterprise)
@@ -241,6 +249,29 @@ impl Cli {
             }
             Some(Command::Community) => {
                 self.cmd_community().await
+            }
+            Some(Command::Queue { ref action }) => {
+                use colored::Colorize;
+                match action.as_str() {
+                    "list" => crate::queue::print_queue(),
+                    "run" => {
+                        let n = crate::queue::run_pending(false).await?;
+                        eprintln!("\n  {} consumed {} item(s) from defensive queue",
+                            "✓".green(), n);
+                        Ok(())
+                    }
+                    "dry-run" => {
+                        let n = crate::queue::run_pending(true).await?;
+                        eprintln!("\n  {} dry-run · {} item(s) would consume",
+                            "·".dimmed(), n);
+                        Ok(())
+                    }
+                    other => {
+                        eprintln!("  {} unknown action {:?} (try list, run, dry-run)",
+                            "✗".red(), other);
+                        std::process::exit(2);
+                    }
+                }
             }
             Some(Command::License { ref activate }) => {
                 self.cmd_license(activate.clone()).await

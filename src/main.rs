@@ -7,6 +7,7 @@ pub mod compliance;
 mod license;
 pub mod dashboard;
 pub mod scheduler;
+pub mod queue;
 
 use clap::Parser;
 use cli::Cli;
