@@ -128,24 +128,44 @@ pub fn net_block(target: &str, reason: &str) -> BlockAction {
 
     #[cfg(target_os = "windows")]
     {
-        // Distinguish IP vs domain — netsh syntax differs.
         let is_ip = target.parse::<std::net::IpAddr>().is_ok();
-        let rule_name = format!("DragonKeep_block_{}", target);
-        let args: Vec<String> = if is_ip {
-            vec!["advfirewall".into(), "firewall".into(), "add".into(), "rule".into(),
-                 format!("name={}", rule_name), "dir=out".into(), "action=block".into(),
-                 format!("remoteip={}", target)]
+        if is_ip {
+            // IP block via Windows Defender Firewall outbound rule.
+            let rule_name = format!("DragonKeep_block_{}", target);
+            let args = ["advfirewall", "firewall", "add", "rule",
+                        &format!("name={}", rule_name), "dir=out", "action=block",
+                        &format!("remoteip={}", target)];
+            match std::process::Command::new("netsh").args(&args).output() {
+                Ok(out) if out.status.success() => {}
+                Ok(out) => { action.result = "fail".into(); action.detail = Some(String::from_utf8_lossy(&out.stderr).to_string()); }
+                Err(e)  => { action.result = "skipped".into(); action.detail = Some(format!("netsh not found · {e}")); }
+            }
         } else {
-            // For domains, route to a black-hole address by writing to hosts file.
-            action.result = "skipped".into();
-            action.detail = Some("domain blocking on Windows requires hosts-file rewrite (TODO)".into());
-            record(action.clone());
-            return action;
-        };
-        match std::process::Command::new("netsh").args(&args).output() {
-            Ok(out) if out.status.success() => {}
-            Ok(out) => { action.result = "fail".into(); action.detail = Some(String::from_utf8_lossy(&out.stderr).to_string()); }
-            Err(e)  => { action.result = "skipped".into(); action.detail = Some(format!("netsh not found · {e}")); }
+            // Domain block via hosts-file rewrite (sinkhole to 0.0.0.0).
+            // C:\Windows\System32\drivers\etc\hosts — must run as Administrator.
+            use std::io::Write;
+            let hosts = std::path::Path::new(r"C:\Windows\System32\drivers\etc\hosts");
+            let marker = format!("0.0.0.0\t{}\t# dragonkeep block · {}", target, reason);
+            let already = std::fs::read_to_string(hosts).ok()
+                .map(|c| c.lines().any(|l| l.contains(target) && l.contains("dragonkeep block")))
+                .unwrap_or(false);
+            if already {
+                action.result = "skipped".into();
+                action.detail = Some("already in hosts file".into());
+            } else {
+                match std::fs::OpenOptions::new().append(true).open(hosts) {
+                    Ok(mut f) => {
+                        if let Err(e) = writeln!(f, "{}", marker) {
+                            action.result = "fail".into();
+                            action.detail = Some(format!("hosts write failed · {e}"));
+                        }
+                    }
+                    Err(e) => {
+                        action.result = "skipped".into();
+                        action.detail = Some(format!("hosts open failed (need Administrator?) · {e}"));
+                    }
+                }
+            }
         }
     }
 
