@@ -22,6 +22,11 @@ pub mod oracle;
 pub mod antivirus;
 pub mod quarantine;
 pub mod ioc;
+// v0.8 — NGAV upgrade (Falcon-class behavioral + telemetry + autoblock)
+pub mod behavioral;
+pub mod telemetry;
+pub mod autoblock;
+pub mod platform;
 
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
