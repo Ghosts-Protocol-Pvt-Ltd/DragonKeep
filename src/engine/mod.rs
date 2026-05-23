@@ -27,6 +27,9 @@ pub mod behavioral;
 pub mod telemetry;
 pub mod autoblock;
 pub mod platform;
+// v0.9 — kernel + memory layer
+pub mod behavioral_ebpf;
+pub mod memory_scan;
 
 use colored::Colorize;
 use serde::{Deserialize, Serialize};

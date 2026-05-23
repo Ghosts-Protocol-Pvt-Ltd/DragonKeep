@@ -84,35 +84,77 @@ pub fn kill_pid(pid: u32, reason: &str) -> BlockAction {
     action
 }
 
-/// Block an IPv4 / IPv6 / domain. Linux uses an nftables `dragonkeep_block`
-/// set; falls back to /etc/hosts rewrite for domains if nft is unavailable.
+/// Block an IPv4 / IPv6 / domain at the firewall layer.
+///
+/// Linux:   nftables `dragonkeep_block` set (`nft add element …`)
+/// macOS:   pf table `dragonkeep_block` (`pfctl -t … -T add`)
+/// Windows: Windows Defender Firewall (`netsh advfirewall firewall add`)
+///
+/// All three are best-effort shell-outs. A "skipped" result means the
+/// tool wasn't installed or the operator lacks privilege.
 pub fn net_block(target: &str, reason: &str) -> BlockAction {
     let mut action = BlockAction {
         id: uuid::Uuid::new_v4().to_string(),
         ts: now_iso(), kind: "net_block".into(), target: target.into(),
         reason: reason.into(), result: "ok".into(), detail: None,
     };
+
     #[cfg(target_os = "linux")]
     {
-        // Best-effort: append to nftables set if `nft` is available.
-        if let Ok(out) = std::process::Command::new("nft")
+        match std::process::Command::new("nft")
             .args(["add", "element", "inet", "filter", "dragonkeep_block", &format!("{{{}}}", target)])
             .output()
         {
-            if !out.status.success() {
-                action.result = "fail".into();
-                action.detail = Some(String::from_utf8_lossy(&out.stderr).to_string());
-            }
-        } else {
-            action.result = "skipped".into();
-            action.detail = Some("nft not found".into());
+            Ok(out) if out.status.success() => {}
+            Ok(out) => { action.result = "fail".into(); action.detail = Some(String::from_utf8_lossy(&out.stderr).to_string()); }
+            Err(e)  => { action.result = "skipped".into(); action.detail = Some(format!("nft not found · {e}")); }
         }
     }
-    #[cfg(not(target_os = "linux"))]
+
+    #[cfg(target_os = "macos")]
+    {
+        // pf table must already exist; usually defined in /etc/pf.conf as:
+        //   table <dragonkeep_block> persist
+        //   block in quick from <dragonkeep_block>
+        match std::process::Command::new("pfctl")
+            .args(["-t", "dragonkeep_block", "-T", "add", target])
+            .output()
+        {
+            Ok(out) if out.status.success() => {}
+            Ok(out) => { action.result = "fail".into(); action.detail = Some(String::from_utf8_lossy(&out.stderr).to_string()); }
+            Err(e)  => { action.result = "skipped".into(); action.detail = Some(format!("pfctl not found · {e}")); }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // Distinguish IP vs domain — netsh syntax differs.
+        let is_ip = target.parse::<std::net::IpAddr>().is_ok();
+        let rule_name = format!("DragonKeep_block_{}", target);
+        let args: Vec<String> = if is_ip {
+            vec!["advfirewall".into(), "firewall".into(), "add".into(), "rule".into(),
+                 format!("name={}", rule_name), "dir=out".into(), "action=block".into(),
+                 format!("remoteip={}", target)]
+        } else {
+            // For domains, route to a black-hole address by writing to hosts file.
+            action.result = "skipped".into();
+            action.detail = Some("domain blocking on Windows requires hosts-file rewrite (TODO)".into());
+            record(action.clone());
+            return action;
+        };
+        match std::process::Command::new("netsh").args(&args).output() {
+            Ok(out) if out.status.success() => {}
+            Ok(out) => { action.result = "fail".into(); action.detail = Some(String::from_utf8_lossy(&out.stderr).to_string()); }
+            Err(e)  => { action.result = "skipped".into(); action.detail = Some(format!("netsh not found · {e}")); }
+        }
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
         action.result = "skipped".into();
-        action.detail = Some("net_block not yet implemented for this OS".into());
+        action.detail = Some("net_block not implemented for this OS".into());
     }
+
     record(action.clone());
     action
 }

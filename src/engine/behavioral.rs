@@ -121,10 +121,13 @@ pub fn evaluate(cmdline: &str, parent_cmd: &str) -> (Vec<String>, u32) {
     (hits, score.min(100))
 }
 
-/// One sweep across /proc. Returns events whose risk_score >= 30.
-/// Persists each to ~/.dragonkeep/behavioral.jsonl.
+/// One sweep across running processes. Linux uses /proc directly;
+/// macOS + Windows use the `sysinfo` crate (already a dependency).
+/// Returns events whose risk_score >= 30 and persists each to
+/// ~/.dragonkeep/behavioral.jsonl.
 pub fn sweep() -> Vec<ProcessEvent> {
     let mut out: Vec<ProcessEvent> = Vec::new();
+
     #[cfg(target_os = "linux")]
     {
         let Ok(rd) = fs::read_dir("/proc") else { return out; };
@@ -148,6 +151,40 @@ pub fn sweep() -> Vec<ProcessEvent> {
             }
         }
     }
+
+    // macOS / Windows / other Unix — use sysinfo for the cross-OS path.
+    #[cfg(not(target_os = "linux"))]
+    {
+        use sysinfo::{System, Pid as SysPid};
+        let mut sys = System::new_all();
+        sys.refresh_processes();
+        // First pass: build a pid → cmdline map so we can fetch parent_cmd cheaply.
+        let mut cmdmap: std::collections::HashMap<u32, String> = std::collections::HashMap::new();
+        for (pid, proc_) in sys.processes() {
+            let pid_u32 = pid.as_u32();
+            let cmd = proc_.cmd().join(" ");
+            cmdmap.insert(pid_u32, if cmd.is_empty() { proc_.name().to_string() } else { cmd });
+        }
+        for (pid, proc_) in sys.processes() {
+            let pid_u32 = pid.as_u32();
+            let cmdline = cmdmap.get(&pid_u32).cloned().unwrap_or_default();
+            if cmdline.is_empty() { continue }
+            let ppid = proc_.parent().map(SysPid::as_u32).unwrap_or(0);
+            let parent_cmd = cmdmap.get(&ppid).cloned().unwrap_or_default();
+            let uid = proc_.user_id().map(|u| u.to_string().parse::<u32>().unwrap_or(0)).unwrap_or(0);
+            let (hits, score) = evaluate(&cmdline, &parent_cmd);
+            if score >= 30 {
+                let evt = ProcessEvent {
+                    pid: pid_u32, ppid, cmdline, parent_cmd, uid,
+                    started_at: now_iso(),
+                    rule_hits: hits, risk_score: score,
+                };
+                let _ = persist(&evt);
+                out.push(evt);
+            }
+        }
+    }
+
     out
 }
 
