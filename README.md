@@ -1,12 +1,33 @@
-# 🏰 DragonKeep — Community Edition
+# DragonKeep — Community Edition
 
-**Next-gen system security, threat defense & performance platform.**
+> **v0.6.0 "DragonShield drop" — defensive backbone of the Ghost Protocol
+> stack. 18 specialised engines including MDR (Shield), continuous
+> monitoring (Patrol), compliance audit binder (Proof), SOAR playbooks
+> (Respond), active deception (Honeypot), multi-host federation (Swarm),
+> and threat-intel feeds (Oracle) — bridged into Phantom Memory so
+> defensive findings join offensive scan history in one dossier per
+> target.**
 
-A command-line tool built in Rust that scans, defends, hunts, hardens, tunes, and monitors your system — from gaming rigs to AI workstations to production servers. 11 specialized engines cover malware defense, ransomware protection, threat hunting, security auditing, AI/ML threat detection, supply chain integrity, runtime anomaly detection, performance tuning, process monitoring, and network hardening.
+A command-line tool built in Rust that scans, defends, hunts, hardens, tunes, and monitors your system — from gaming rigs to AI workstations to production servers. **18 specialized engines** cover malware defense, ransomware protection, threat hunting, security auditing, AI/ML threat detection, supply chain integrity, runtime anomaly detection, performance tuning, process monitoring, network hardening, managed detection & response, continuous monitoring, compliance evidence, security automation, active deception, fleet federation, and threat intelligence.
+
+## The Ghost Protocol moat — defensive findings join offensive ones
+
+When the **Memory Bridge** is enabled (`DRAGONKEEP_MEMORY_BRIDGE=http://localhost:4091`), every Critical/High defensive finding pushes to **Phantom Memory** alongside offensive PhantomDragon scan findings. The result: one engagement memory per target, both sides of the kill chain, queryable from the dragon CLI:
+
+```bash
+$ dragon memory show host01
+[Phantom Memory] Dossier on host01
+
+  3 PhantomDragon scans · 18 DragonKeep findings · 7 OSINT entities
+  Persistent: IDOR (offensive), missing SUID hardening (defensive)
+  Last drift: 2 new defensive findings, 5 offensive fixes confirmed
+```
+
+No other stack ships this combination of local AI + no-API OSINT + persistent memory + offensive scanner + defensive platform.
 
 ## Why DragonKeep?
 
-Most security tools do one thing. DragonKeep runs 11 engines in a single binary with zero runtime dependencies, producing findings mapped to 6 industry frameworks:
+Most security tools do one thing. DragonKeep runs 18 engines in a single binary with zero runtime dependencies, producing findings mapped to 6 industry frameworks:
 
 - **MITRE ATT&CK** — Technique IDs from [attack.mitre.org](https://attack.mitre.org) (150+ technique mappings)
 - **Atomic Red Team** — Test procedures from [Red Canary](https://github.com/redcanaryco/atomic-red-team) (ATT&CK technique IDs double as test references)

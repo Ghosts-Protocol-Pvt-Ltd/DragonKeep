@@ -9,6 +9,15 @@ pub mod phantom;
 pub mod hydra;
 pub mod drake;
 pub mod talon;
+// v0.6 — defensive expansion (the DragonShield drop)
+pub mod memory_bridge;
+pub mod shield;
+pub mod patrol;
+pub mod proof;
+pub mod respond;
+pub mod honeypot;
+pub mod swarm;
+pub mod oracle;
 
 use colored::Colorize;
 use serde::{Deserialize, Serialize};

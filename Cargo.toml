@@ -1,13 +1,14 @@
 [package]
 name = "dragonkeep"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
-description = "Next-gen system security, threat defense & performance platform — Community Edition — 11 engines: Sentinel (security), Forge (performance), Warden (processes), Bastion (network), Citadel (hardening), Spectre (AI/ML threats), Aegis (supply chain), Phantom (anomaly detection), Hydra (malware defense), Drake (ransomware defense), Talon (threat hunting)"
+description = "Defensive security, threat defense & response platform — Community Edition — 18 engines including Shield (MDR + Phantom Memory bridge), Patrol (continuous monitoring), Proof (compliance audit binder), Respond (SOAR playbooks), Honeypot (active deception), Swarm (multi-host federation), and Oracle (threat intel feeds) on top of the existing 11."
 license = "MIT"
-authors = ["Ghost Protocol <ghosts.lk@proton.me>"]
+authors = ["Ryan Sebastian <ryan@ghosts.lk>"]
 repository = "https://github.com/Ghosts-Protocol-Pvt-Ltd/DragonKeep"
-keywords = ["security", "performance", "system-hardening", "monitoring", "ai-security"]
+keywords = ["security", "mdr", "compliance", "soar", "deception"]
 categories = ["command-line-utilities", "os"]
+readme = "README.md"
 
 [[bin]]
 name = "dragonkeep"
