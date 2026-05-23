@@ -18,6 +18,10 @@ pub mod respond;
 pub mod honeypot;
 pub mod swarm;
 pub mod oracle;
+// v0.7 — antivirus-grade trio (the DragonAV drop)
+pub mod antivirus;
+pub mod quarantine;
+pub mod ioc;
 
 use colored::Colorize;
 use serde::{Deserialize, Serialize};

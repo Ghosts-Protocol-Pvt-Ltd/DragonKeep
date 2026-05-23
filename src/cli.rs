@@ -138,6 +138,35 @@ pub enum Command {
         action: String,
     },
 
+    /// Antivirus-grade file scan (YARA-style rules + SHA-256 IOC match).
+    /// Suspicious/malicious files are quarantined automatically.
+    AvScan {
+        /// Path to scan (file or directory).
+        path: String,
+        /// Recurse into directories
+        #[arg(long, default_value = "true")]
+        recursive: bool,
+        /// Disable auto-quarantine — leave files in place
+        #[arg(long)]
+        no_quarantine: bool,
+    },
+
+    /// Manage the quarantine vault.
+    Quarantine {
+        /// Action: `list`, `restore <id>`, `purge <id>`
+        action: String,
+        /// Quarantine record id (for restore / purge)
+        id: Option<String>,
+    },
+
+    /// Manage the IOC (indicator-of-compromise) store.
+    Ioc {
+        /// Action: `list`, `add <type> <value>`, `match <ioc...>`
+        action: String,
+        /// Positional args (type+value for add, list for match)
+        args: Vec<String>,
+    },
+
     // ==================== PRO FEATURES ====================
 
     /// View or activate license (Pro/Enterprise)
@@ -269,6 +298,94 @@ impl Cli {
                     other => {
                         eprintln!("  {} unknown action {:?} (try list, run, dry-run)",
                             "✗".red(), other);
+                        std::process::exit(2);
+                    }
+                }
+            }
+            Some(Command::AvScan { ref path, recursive, no_quarantine }) => {
+                use colored::Colorize;
+                let p = std::path::Path::new(path);
+                if !p.exists() {
+                    eprintln!("  {} path not found: {}", "✗".red(), path);
+                    std::process::exit(2);
+                }
+                let rec = crate::engine::antivirus::scan(p, recursive, !no_quarantine);
+                eprintln!("\n  {} antivirus scan complete", "✓".green());
+                eprintln!("    files scanned: {}", rec.files_scanned);
+                eprintln!("    verdict:       {}", match rec.verdict.as_str() {
+                    "malicious"  => "MALICIOUS".red().bold().to_string(),
+                    "suspicious" => "SUSPICIOUS".yellow().bold().to_string(),
+                    _            => "clean".green().to_string(),
+                });
+                if !rec.matched_rules.is_empty() {
+                    eprintln!("    rules matched: {}", rec.matched_rules.join(", ").red());
+                }
+                Ok(())
+            }
+            Some(Command::Quarantine { ref action, ref id }) => {
+                use colored::Colorize;
+                match action.as_str() {
+                    "list" => {
+                        let rows = crate::engine::quarantine::list();
+                        if rows.is_empty() {
+                            eprintln!("  {} vault is empty", "·".dimmed());
+                        } else {
+                            for r in rows {
+                                eprintln!("  {} {} {} {}", "·".dimmed(),
+                                    &r.id[..8], r.original_path, r.reason.yellow());
+                            }
+                        }
+                        Ok(())
+                    }
+                    "restore" => {
+                        let id = id.clone().ok_or_else(|| anyhow::anyhow!("usage: quarantine restore <id>"))?;
+                        crate::engine::quarantine::restore(&id)?;
+                        eprintln!("  {} restored {}", "✓".green(), id);
+                        Ok(())
+                    }
+                    "purge" => {
+                        let id = id.clone().ok_or_else(|| anyhow::anyhow!("usage: quarantine purge <id>"))?;
+                        crate::engine::quarantine::purge(&id)?;
+                        eprintln!("  {} purged {}", "✓".green(), id);
+                        Ok(())
+                    }
+                    other => {
+                        eprintln!("  {} unknown action {:?}", "✗".red(), other);
+                        std::process::exit(2);
+                    }
+                }
+            }
+            Some(Command::Ioc { ref action, ref args }) => {
+                use colored::Colorize;
+                match action.as_str() {
+                    "list" => {
+                        let rows = crate::engine::ioc::load_all();
+                        for r in rows {
+                            eprintln!("  {} {}={} ({})", "·".dimmed(), r.kind.cyan(), r.value, r.source.dimmed());
+                        }
+                        Ok(())
+                    }
+                    "add" => {
+                        if args.len() < 2 {
+                            anyhow::bail!("usage: ioc add <type> <value> [source]");
+                        }
+                        let src = args.get(2).cloned().unwrap_or_else(|| "manual".to_string());
+                        let r = crate::engine::ioc::add(&args[0], &args[1], &src, None)?;
+                        eprintln!("  {} ioc added · {}", "✓".green(), r.id);
+                        Ok(())
+                    }
+                    "match" => {
+                        let (matched, unmatched) = crate::engine::ioc::match_many(args);
+                        eprintln!("  {} matched: {} · unmatched: {}",
+                            if matched.is_empty() { "·".dimmed() } else { "✓".green().bold() },
+                            matched.len(), unmatched.len());
+                        for m in matched {
+                            eprintln!("    {} {}", m.kind.cyan(), m.value);
+                        }
+                        Ok(())
+                    }
+                    other => {
+                        eprintln!("  {} unknown action {:?}", "✗".red(), other);
                         std::process::exit(2);
                     }
                 }
