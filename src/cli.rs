@@ -69,7 +69,20 @@ pub enum Command {
     },
 
     /// Live system monitoring dashboard (TUI)
-    Monitor,
+    Monitor {
+        /// Attach the eBPF kernel probe for sub-ms process visibility.
+        /// Requires Linux + CAP_BPF + a kernel with BTF. Falls back to
+        /// the sysinfo poll if BTF is missing.
+        /// Spec: dragon-platform/specs/002-ebpf-userspace-loader
+        #[arg(long)]
+        ebpf: bool,
+
+        /// Attach the Windows ETW subscriber for ProcessStart events.
+        /// Requires Administrator. Falls back to sysinfo if not elevated.
+        /// Spec: dragon-platform/specs/004-windows-etw
+        #[arg(long)]
+        etw: bool,
+    },
 
     /// Network security audit + firewall check
     Firewall,
@@ -225,8 +238,30 @@ impl Cli {
             Some(Command::Tune { ref profile }) => {
                 self.cmd_tune(&config, profile).await
             }
-            Some(Command::Monitor) => {
-                self.cmd_monitor(&config).await
+            Some(Command::Monitor { ebpf, etw }) => {
+                use colored::Colorize;
+                if ebpf {
+                    match crate::engine::behavioral_ebpf::attach() {
+                        Ok(_) => eprintln!("  {} eBPF kernel probe attached", "✓".green().bold()),
+                        Err(e) => {
+                            eprintln!("  {} eBPF attach failed · {}", "✗".red().bold(), e);
+                            eprintln!("  {} falling back to sysinfo poll", "·".dimmed());
+                        }
+                    }
+                }
+                if etw {
+                    match crate::engine::behavioral_etw::start() {
+                        Ok(_) => eprintln!("  {} ETW session started", "✓".green().bold()),
+                        Err(e) => {
+                            eprintln!("  {} ETW start failed · {}", "✗".red().bold(), e);
+                            eprintln!("  {} falling back to sysinfo poll", "·".dimmed());
+                        }
+                    }
+                }
+                let result = self.cmd_monitor(&config).await;
+                if ebpf { crate::engine::behavioral_ebpf::detach(); }
+                if etw  { crate::engine::behavioral_etw::stop(); }
+                result
             }
             Some(Command::Firewall) => {
                 self.cmd_firewall(&config).await
