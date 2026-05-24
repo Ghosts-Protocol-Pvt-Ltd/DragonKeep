@@ -142,13 +142,15 @@ pub fn sweep() -> Vec<ProcessEvent> {
             let (hits, score) = evaluate(&cmdline, &parent_cmd);
             if score >= 30 {
                 let evt = ProcessEvent {
-                    pid, ppid, cmdline, parent_cmd, uid,
+                    pid, ppid, cmdline: cmdline.clone(), parent_cmd, uid,
                     started_at: now_iso(),
                     rule_hits: hits, risk_score: score,
                 };
                 let _ = persist(&evt);
                 out.push(evt);
             }
+            // ML engine sees every event regardless of regex score
+            crate::engine::behavioral_ml::evaluate_and_record(pid, &cmdline);
         }
     }
 

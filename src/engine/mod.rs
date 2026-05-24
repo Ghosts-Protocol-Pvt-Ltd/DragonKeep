@@ -32,6 +32,8 @@ pub mod behavioral_ebpf;
 pub mod memory_scan;
 // v0.9.2 — Windows native event source
 pub mod behavioral_etw;
+// v0.10 — NGAV ML uplift (online statistical anomaly · pure Rust)
+pub mod behavioral_ml;
 
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
