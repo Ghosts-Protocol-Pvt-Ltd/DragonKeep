@@ -419,8 +419,35 @@ impl Cli {
                         }
                         Ok(())
                     }
+                    // Spec 013 · bulk-fetch from a public IOC feed file.
+                    // Constitution I exception: explicit operator opt-in
+                    // via this subcommand, not automatic background fetch.
+                    "fetch" => {
+                        let url = args.first().cloned()
+                            .unwrap_or_else(|| "https://bazaar.abuse.ch/export/txt/sha256/recent/".to_string());
+                        eprintln!("  {} fetching IOC feed from {}", "·".dimmed(), url);
+                        let body = reqwest::blocking::get(&url)?.text()?;
+                        let mut added = 0usize;
+                        for raw in body.lines() {
+                            let line = raw.trim();
+                            if line.is_empty() || line.starts_with('#') { continue }
+                            // MalwareBazaar lines are sha256 or "sha256,…" tuples — accept either
+                            let candidate = line.split(',').next().unwrap_or(line).trim().to_lowercase();
+                            let (kind, value) = match candidate.len() {
+                                64 => ("sha256", candidate),
+                                40 => ("sha1",   candidate),
+                                32 => ("md5",    candidate),
+                                _  => continue,
+                            };
+                            if crate::engine::ioc::add(kind, &value, "abuse.ch", Some(url.clone())).is_ok() {
+                                added += 1;
+                            }
+                        }
+                        eprintln!("  {} ingested {} IOCs from {}", "✓".green().bold(), added, url);
+                        Ok(())
+                    }
                     other => {
-                        eprintln!("  {} unknown action {:?}", "✗".red(), other);
+                        eprintln!("  {} unknown action {:?} (try: list / add / match / fetch)", "✗".red(), other);
                         std::process::exit(2);
                     }
                 }

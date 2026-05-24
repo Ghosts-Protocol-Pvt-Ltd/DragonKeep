@@ -84,6 +84,40 @@ pub struct FileVerdict {
     pub matched_hashes: Vec<String>,
     pub sha256: Option<String>,
     pub size: u64,
+    /// Shannon entropy of the densest 4 KB window in the file. > 7.6
+    /// strongly suggests packing / encryption.
+    pub max_entropy: f32,
+}
+
+/// Compute Shannon entropy for a byte slice (max 8.0 bits).
+fn shannon_entropy(data: &[u8]) -> f32 {
+    if data.is_empty() { return 0.0 }
+    let mut hist = [0u32; 256];
+    for &b in data { hist[b as usize] += 1; }
+    let len = data.len() as f32;
+    let mut h = 0.0_f32;
+    for &c in hist.iter() {
+        if c == 0 { continue }
+        let p = c as f32 / len;
+        h -= p * p.log2();
+    }
+    h
+}
+
+/// Maximum Shannon entropy across overlapping 4 KB windows.
+/// Returns 0.0 for inputs smaller than the window.
+fn max_window_entropy(data: &[u8]) -> f32 {
+    const WIN: usize = 4096;
+    if data.len() < WIN { return shannon_entropy(data); }
+    let mut hi = 0.0_f32;
+    let step = WIN / 2;  // 50% overlap so we catch packed regions at any offset
+    let mut i = 0;
+    while i + WIN <= data.len() {
+        let e = shannon_entropy(&data[i..i + WIN]);
+        if e > hi { hi = e; }
+        i += step;
+    }
+    hi
 }
 
 /// Scan one file and return its verdict.
@@ -94,6 +128,7 @@ pub fn scan_file(path: &Path) -> FileVerdict {
         matched_hashes: Vec::new(),
         sha256: None,
         size: 0,
+        max_entropy: 0.0,
     };
     let meta = match fs::metadata(path) { Ok(m) => m, Err(_) => return verdict };
     if !meta.is_file() { return verdict }
@@ -115,11 +150,23 @@ pub fn scan_file(path: &Path) -> FileVerdict {
             verdict.matched_hashes.push(s.clone());
         }
     }
+
+    // PE entropy heuristic — packed/encrypted binaries cluster above 7.5 bits.
+    // Spec 013 acceptance criterion 2.
+    let is_pe = content.starts_with(b"MZ");
+    if is_pe {
+        let h = max_window_entropy(&content);
+        verdict.max_entropy = h;
+        if h >= 7.6 {
+            verdict.matched_rules.push(format!("packed-binary-entropy-{:.2}", h));
+        }
+    }
+
     if !verdict.matched_hashes.is_empty() {
         verdict.verdict = "malicious".into();
     } else if !verdict.matched_rules.is_empty() {
         verdict.verdict = "suspicious".into();
-    } else if content.starts_with(b"MZ")
+    } else if is_pe
         && path.extension().and_then(|e| e.to_str()).map(|e| SUSPICIOUS_EXT.contains(&e.to_lowercase().as_str())).unwrap_or(false)
     {
         verdict.verdict = "suspicious".into();

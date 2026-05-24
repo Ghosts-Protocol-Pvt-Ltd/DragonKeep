@@ -81,7 +81,7 @@ struct Baseline {
 static BASELINE: Mutex<Option<Baseline>> = Mutex::new(None);
 
 fn baseline_load_if_empty() {
-    let mut guard = BASELINE.lock().unwrap();
+    let mut guard = match BASELINE.lock() { Ok(g) => g, Err(p) => p.into_inner() };
     if guard.is_some() { return }
     let mut b = Baseline::default();
     // Seed from the last WINDOW_SIZE rows of behavioral.jsonl
@@ -107,7 +107,7 @@ fn baseline_load_if_empty() {
 pub fn score(cmdline: &str) -> (f64, Vec<String>) {
     baseline_load_if_empty();
     let host = hostname();
-    let guard = BASELINE.lock().unwrap();
+    let guard = match BASELINE.lock() { Ok(g) => g, Err(p) => p.into_inner() };
     let Some(b) = guard.as_ref() else { return (0.0, vec![]) };
     let Some((counts, total)) = b.by_host.get(&host) else { return (0.0, vec![]) };
     if *total == 0 { return (0.0, vec![]) }
@@ -130,7 +130,7 @@ pub fn score(cmdline: &str) -> (f64, Vec<String>) {
 pub fn observe(cmdline: &str) {
     baseline_load_if_empty();
     let host = hostname();
-    let mut guard = BASELINE.lock().unwrap();
+    let mut guard = match BASELINE.lock() { Ok(g) => g, Err(p) => p.into_inner() };
     if let Some(b) = guard.as_mut() {
         let entry = b.by_host.entry(host).or_insert_with(|| (HashMap::new(), 0));
         for bg in bigrams(cmdline) {
@@ -184,7 +184,7 @@ fn persist(a: &MlAnomaly) -> std::io::Result<()> {
 
 pub fn run() -> Vec<Finding> {
     baseline_load_if_empty();
-    let guard = BASELINE.lock().unwrap();
+    let guard = match BASELINE.lock() { Ok(g) => g, Err(p) => p.into_inner() };
     let total_bgs: usize = guard.as_ref().map(|b| b.by_host.values().map(|(m, _)| m.len()).sum()).unwrap_or(0);
     let recent_path = dragonkeep_dir().join("behavioral_ml.jsonl");
     let recent = fs::read_to_string(&recent_path).map(|s| s.lines().count()).unwrap_or(0);

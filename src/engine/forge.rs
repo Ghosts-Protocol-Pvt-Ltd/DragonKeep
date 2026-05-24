@@ -125,9 +125,12 @@ async fn apply_tune_command(command: &str) -> Result<std::process::Output, std::
         return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "empty command"));
     }
 
-    // Handle "echo value > /sys/..." pattern
+    // Handle "echo value > /sys/..." pattern. Defensive position lookup —
+    // the `contains` above guarantees a hit, but we don't panic if invariant slips.
     if parts[0] == "echo" && parts.len() >= 4 && parts.contains(&">") {
-        let gt_pos = parts.iter().position(|&p| p == ">").unwrap();
+        let Some(gt_pos) = parts.iter().position(|&p| p == ">") else {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "echo > not found"));
+        };
         let value = parts[1..gt_pos].join(" ");
         let target = parts[gt_pos + 1];
         match tokio::fs::write(target, format!("{}\n", value)).await {
